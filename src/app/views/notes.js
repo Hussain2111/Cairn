@@ -10,6 +10,22 @@ export function title() {
   return 'Notes';
 }
 
+// The note body autosaves on a debounce, which leaves a window in which the
+// last thing typed is not yet in the store. Leaving the page, switching notes
+// or hiding the tab flushes it, so no keystroke depends on waiting around.
+let flushPendingSave = null;
+
+if (!window.__cairnNoteFlush) {
+  window.__cairnNoteFlush = true;
+  const flush = () => flushPendingSave?.();
+  window.addEventListener('beforeunload', flush);
+  window.addEventListener('pagehide', flush);
+  window.addEventListener('hashchange', flush);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush();
+  });
+}
+
 export function render(ctx) {
   const noteId = ctx.route.params[0];
   const attachFilter = ctx.route.query.get('attach');
@@ -51,6 +67,7 @@ export function render(ctx) {
 function noteListItem(ctx, note, active) {
   return el('button.note-item', {
     type: 'button',
+    dataset: { id: note.id },
     'aria-current': active?.id === note.id ? 'true' : null,
     onclick: () => ctx.navigate(`#/notes/${note.id}`),
   }, [
@@ -63,6 +80,8 @@ function noteListItem(ctx, note, active) {
 
 function noteEditor(ctx, note) {
   const titleInput = el('input.input', { value: note.title, placeholder: 'Title' });
+  const titleLabel = document.querySelector(`.note-item[data-id="${CSS.escape(note.id)}"] .note-item__title`)
+    ?? el('span');
   const bodyInput = el('textarea.textarea.textarea--tall', { value: note.body, spellcheck: 'true' });
   const attachSelect = attachPicker(ctx.state, note.attach);
   const preview = el('div.markdown', { html: renderMarkdown(note.body) });
@@ -74,21 +93,29 @@ function noteEditor(ctx, note) {
       note.body = bodyInput.value;
       note.attach = parseAttach(attachSelect.value);
       note.updatedAt = nowStamp();
-    }, { undoable: false });
+      // The list entry is the only thing on screen that reflects the title.
+      titleLabel.textContent = note.title;
+    }, { undoable: false, rerender: false });
   };
 
   let timer = null;
   const scheduleSave = () => {
     clearTimeout(timer);
-    // Debounced: typing should not push a store write (and a re-render) per key.
+    // Debounced: typing should not push a store write per keystroke.
     timer = setTimeout(save, 600);
+  };
+  flushPendingSave = () => {
+    if (!timer) return;
+    clearTimeout(timer);
+    timer = null;
+    save();
   };
   titleInput.addEventListener('input', scheduleSave);
   bodyInput.addEventListener('input', () => {
     preview.innerHTML = renderMarkdown(bodyInput.value);
     scheduleSave();
   });
-  attachSelect.addEventListener('change', save);
+  attachSelect.addEventListener('change', () => { save(); ctx.render(); });
 
   const toggle = el('button.btn.btn--sm', {
     type: 'button',
@@ -128,6 +155,7 @@ function noteEditor(ctx, note) {
             });
             if (answer !== 'confirm') return;
             clearTimeout(timer);
+            flushPendingSave = null;
             ctx.commit('delete note', (state) => {
               const index = state.notes.findIndex((n) => n.id === note.id);
               if (index >= 0) state.notes.splice(index, 1);

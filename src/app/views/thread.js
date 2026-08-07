@@ -236,6 +236,9 @@ function renderStep(ctx, thread, stage, step, actionable, focusId) {
         ctx.commit('add task', () => {
           step.tasks.push(makeTask({ title: value }));
         }, { undoable: false });
+        // The view was rebuilt, so put the cursor back where it was to keep a
+        // run of tasks flowing.
+        refocusAddBox(step.id);
       }
     },
   });
@@ -261,6 +264,13 @@ function renderStep(ctx, thread, stage, step, actionable, focusId) {
     el('div.tasks', step.tasks.map((task) => renderTask(ctx, thread, stage, step, task, actionable, focusId))),
     el('div.inline-add', [addInput]),
   ]);
+}
+
+/** Re-focus a step's add-task box after the tree is rebuilt. */
+function refocusAddBox(stepId) {
+  requestAnimationFrame(() => {
+    document.querySelector(`.step[data-id="${CSS.escape(stepId)}"] .inline-add .input`)?.focus();
+  });
 }
 
 function renderTask(ctx, thread, stage, step, task, actionable, focusId) {

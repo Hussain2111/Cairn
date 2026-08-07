@@ -79,8 +79,14 @@ const ctx = {
   route: parseRoute(),
   navigate,
   render: () => render(),
-  /** Mutate, save, re-render, and offer undo. */
-  commit(label, fn, { undoable = true, message = null } = {}) {
+  /**
+   * Mutate, save, re-render, and offer undo.
+   *
+   * `rerender: false` is for autosaves inside a control the user is still
+   * typing in — rebuilding the view under them would steal focus and the
+   * caret mid-sentence.
+   */
+  commit(label, fn, { undoable = true, message = null, rerender = true } = {}) {
     const outcome = store.mutate(label, fn);
     if (outcome.saved.ok === false && outcome.saved.reason === 'quota') {
       // The quota banner is already raised by the store.
@@ -92,7 +98,7 @@ const ctx = {
     } else if (message) {
       toast(message);
     }
-    render();
+    if (rerender) render();
     return outcome.result;
   },
   toast,
