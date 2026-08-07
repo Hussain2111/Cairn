@@ -174,6 +174,15 @@ test('search needs at least two characters and returns routes to jump to', () =>
   assert.match(hit.route, /^#\/thread\//);
 });
 
+test('a ranking bonus never turns a non-match into a result', () => {
+  // The bonus applied to titles used to be added unconditionally, which made
+  // every thread, note and question match every query.
+  const state = fixture();
+  const results = search(state, 'frame clause');
+  assert.deepEqual(results.map((r) => r.type), ['question']);
+  assert.deepEqual(search(state, 'zzzzzz'), []);
+});
+
 test('search ranks exact title matches above body matches', () => {
   const state = createEmptyState([]);
   state.notes.push({ id: 'n1', title: 'Parser', body: 'nothing relevant', attach: null });

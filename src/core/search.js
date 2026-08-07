@@ -17,6 +17,11 @@ function score(haystack, needle) {
   return 30;
 }
 
+/** A ranking bonus, but only for something that actually matched. */
+function boost(value, amount) {
+  return value > 0 ? value + amount : 0;
+}
+
 function snippet(text, needle, length = 140) {
   const raw = String(text ?? '').replace(/\s+/g, ' ').trim();
   if (!raw) return '';
@@ -47,7 +52,7 @@ export function search(state, query, { limit = 80 } = {}) {
       context: thread.type,
       snippet: snippet(thread.description || thread.notes, needle),
       route: `#/thread/${thread.id}`,
-      score: base + 5,
+      score: boost(base, 5),
     });
 
     for (const stage of thread.stages ?? []) {
@@ -94,7 +99,7 @@ export function search(state, query, { limit = 80 } = {}) {
       context: 'note',
       snippet: snippet(note.body, needle),
       route: `#/notes/${note.id}`,
-      score: Math.max(score(note.title, needle) + 5, score(note.body, needle)),
+      score: Math.max(boost(score(note.title, needle), 5), score(note.body, needle)),
     });
   }
 
@@ -109,7 +114,7 @@ export function search(state, query, { limit = 80 } = {}) {
       snippet: snippet(hesitations || q.notes, needle),
       route: `#/questions/${q.bank}?focus=${q.id}`,
       score: Math.max(
-        score(q.title, needle) + 5,
+        boost(score(q.title, needle), 5),
         score((q.tags ?? []).join(' '), needle),
         score(fieldText, needle),
         score(q.notes, needle),
@@ -127,7 +132,7 @@ export function search(state, query, { limit = 80 } = {}) {
       snippet: snippet(app.notes || app.nextAction, needle),
       route: `#/pipelines?focus=${app.id}`,
       score: Math.max(
-        score(app.company, needle) + 5,
+        boost(score(app.company, needle), 5),
         score(app.role, needle),
         score(app.notes, needle),
         score(app.resumeVersion, needle),
@@ -144,7 +149,7 @@ export function search(state, query, { limit = 80 } = {}) {
       context: item.company,
       snippet: snippet(item.notes, needle),
       route: `#/pipelines?tab=outreach&focus=${item.id}`,
-      score: Math.max(score(item.name, needle) + 5, score(item.company, needle), score(item.notes, needle)),
+      score: Math.max(boost(score(item.name, needle), 5), score(item.company, needle), score(item.notes, needle)),
     });
   }
 
@@ -156,7 +161,7 @@ export function search(state, query, { limit = 80 } = {}) {
       context: book.author,
       snippet: snippet(book.notes, needle),
       route: '#/reading',
-      score: Math.max(score(book.title, needle) + 5, score(book.author, needle), score(book.notes, needle)),
+      score: Math.max(boost(score(book.title, needle), 5), score(book.author, needle), score(book.notes, needle)),
     });
   }
 

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { Store, QuotaError } from '../../src/app/store.js';
+import { Store } from '../../src/app/store.js';
 import { makeThread, makeStage, makeStep, makeTask } from '../../src/core/schema.js';
 
 /** A localStorage stand-in, optionally with a byte budget. */

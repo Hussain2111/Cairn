@@ -11,13 +11,6 @@ import { uid } from '../core/ids.js';
 
 const UNDO_LIMIT = 40;
 
-export class QuotaError extends Error {
-  constructor(message) {
-    super(message);
-    this.name = 'QuotaError';
-  }
-}
-
 function isQuotaError(error) {
   return (
     error &&

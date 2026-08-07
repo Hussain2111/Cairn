@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cairn</title>
+    <meta name="description" content="A personal roadmap tool: never see a large thing without the next small thing inside it." />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="theme-color" content="#eceef1" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0e1116" media="(prefers-color-scheme: dark)" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="stylesheet" href="styles/tokens.css" />
+    <link rel="stylesheet" href="styles/base.css" />
+    <link rel="stylesheet" href="styles/components.css" />
+    <script>
+      // Applied before first paint so the page never flashes the wrong theme.
+      try {
+        const saved = JSON.parse(localStorage.getItem('cairn.state') || '{}');
+        const theme = saved?.settings?.theme;
+        if (theme === 'light' || theme === 'dark') {
+          document.documentElement.setAttribute('data-theme', theme);
+        }
+      } catch (error) {
+        /* first run, or unreadable state: the media query decides */
+      }
+    </script>
+  </head>
+  <body>
+    <div class="app" id="app" data-menu="closed">
+      <div class="scrim" id="scrim"></div>
+      <aside class="sidebar" id="sidebar"></aside>
+      <main class="main" id="main">
+        <div class="main__inner" id="view"></div>
+      </main>
+    </div>
+    <noscript>
+      <p style="padding: 2rem">Cairn is a JavaScript application. Enable JavaScript to use it.</p>
+    </noscript>
+    <script type="module" src="src/app/main.js"></script>
+  </body>
+</html>
