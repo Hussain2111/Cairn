@@ -292,6 +292,16 @@ kbd {
   gap: var(--sp-2);
 }
 
+/* A button in a flex column would otherwise stretch to the full width. */
+.stack > .btn,
+.stack > a.btn {
+  align-self: flex-start;
+}
+
+.stack > .btn--block {
+  align-self: stretch;
+}
+
 .row {
   display: flex;
   align-items: center;
