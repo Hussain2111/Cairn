@@ -6,7 +6,7 @@ import { weeklyDistribution, plannedMinutes, actualMinutes, overlaps, dayTotals 
 import { search } from '../../src/core/search.js';
 import { createEmptyState, makeThread, makeStage, makeStep, makeTask, makeQuestion, makeApplication, makeHabit, makeTimeBlock } from '../../src/core/schema.js';
 
-const TODAY = '2026-08-07'; // Friday; week runs Mon 03 -> Sun 09
+const TODAY = '2026-08-07'; // Friday; the week runs Sun 02 -> Sat 08
 
 function fixture() {
   const state = createEmptyState([]);
@@ -86,7 +86,7 @@ test('overlapping blocks on the same day are detected, adjacent ones are not', (
 test('the weekly distribution only counts blocks inside the week', () => {
   const state = fixture();
   const dist = weeklyDistribution(state, { today: TODAY });
-  assert.equal(dist.weekStart, '2026-08-03');
+  assert.equal(dist.weekStart, '2026-08-02');
   assert.equal(dist.planned, 240, 'the 8h block in the previous week is excluded');
   assert.equal(dist.actual, 120);
   assert.equal(dist.rows[0].name, 'Compiler');
@@ -107,8 +107,8 @@ test('day totals gather the blocks for one date', () => {
 
 test('the weekly review separates what moved from what did not', () => {
   const report = generateWeeklyReview(fixture(), { today: TODAY });
-  assert.equal(report.weekStart, '2026-08-03');
-  assert.equal(report.weekEnd, '2026-08-09');
+  assert.equal(report.weekStart, '2026-08-02');
+  assert.equal(report.weekEnd, '2026-08-08');
   assert.deepEqual(report.moved.map((t) => t.thread.name), ['Compiler']);
   assert.deepEqual(report.didNotMove.map((t) => t.thread.name), ['GRE prep']);
   assert.equal(report.totals.tasksCompleted, 1, 'the task finished last week is not counted');

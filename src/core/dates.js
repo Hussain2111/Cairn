@@ -59,22 +59,46 @@ export function isOnOrBefore(a, b) {
   return isValidISODate(a) && isValidISODate(b) && a <= b;
 }
 
-/** Monday-based by default; weekStartsOn 0 gives Sunday. */
-export function startOfWeek(iso, weekStartsOn = 1) {
+// --- the week ---------------------------------------------------------------
+//
+// Weeks run Sunday to Saturday. This constant is the only place that fact is
+// written down: startOfWeek, endOfWeek and the weekday labels all derive from
+// it, and nothing else in the app takes a week-start argument. Change it here
+// and every "this week" figure — targets, streaks, muscle coverage, the weekly
+// review, the time distribution — moves together.
+
+/** Day index the week starts on, as getDay() reports it. 0 = Sunday. */
+export const WEEK_STARTS_ON = 0;
+
+/** First day of the week containing `iso`. */
+export function startOfWeek(iso) {
   const date = parseISODate(iso);
   if (!date) return null;
-  const shift = (date.getDay() - weekStartsOn + 7) % 7;
+  const shift = (date.getDay() - WEEK_STARTS_ON + 7) % 7;
   date.setDate(date.getDate() - shift);
   return toISODate(date);
 }
 
-export function endOfWeek(iso, weekStartsOn = 1) {
-  const start = startOfWeek(iso, weekStartsOn);
+/** Last day of the week containing `iso`. */
+export function endOfWeek(iso) {
+  const start = startOfWeek(iso);
   return start ? addDays(start, 6) : null;
 }
 
 export function weekDates(weekStartISO) {
   return Array.from({ length: 7 }, (_, i) => addDays(weekStartISO, i));
+}
+
+/** Days left in the week including `iso` itself. Sat = 1, Sun = 7. */
+export function daysLeftInWeek(iso) {
+  const end = endOfWeek(iso);
+  const delta = diffDays(iso, end);
+  return delta === null ? 0 : delta + 1;
+}
+
+export function isSameWeek(a, b) {
+  const wa = startOfWeek(a);
+  return wa !== null && wa === startOfWeek(b);
 }
 
 /** Inclusive range test. */
@@ -84,6 +108,14 @@ export function withinRange(iso, startISO, endISO) {
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/**
+ * Two-letter weekday headings in week order, so a day strip can never drift
+ * out of step with WEEK_STARTS_ON.
+ */
+export function weekdayInitials() {
+  return Array.from({ length: 7 }, (_, i) => DAYS[(WEEK_STARTS_ON + i) % 7].slice(0, 2));
+}
 
 export function formatDate(iso, { weekday = false } = {}) {
   const date = parseISODate(iso);

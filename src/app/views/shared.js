@@ -169,7 +169,9 @@ export function editRecord({ title, fields, values = {}, submitLabel = 'Save', w
           let value = spec.type === 'checkbox' ? control.checked : control.value;
           if (typeof value === 'string') value = value.trim();
           if (spec.required && !value) {
-            errorNode.textContent = `${spec.label} is required.`;
+            // `requiredMessage` is for the fields where "X is required" does not
+            // explain why — the chess lesson line being the reason it exists.
+            errorNode.textContent = spec.requiredMessage ?? `${spec.label} is required.`;
             control.focus();
             return;
           }

@@ -23,14 +23,14 @@ export function toggleLog(habit, iso) {
 }
 
 /** Count of logged days in the calendar week containing `iso`. */
-export function weekCount(habit, iso = todayISO(), weekStartsOn = 1) {
-  const start = startOfWeek(iso, weekStartsOn);
+export function weekCount(habit, iso = todayISO()) {
+  const start = startOfWeek(iso);
   const days = new Set(weekDates(start));
   return logDates(habit).filter((d) => days.has(d)).length;
 }
 
-export function weekStatus(habit, iso = todayISO(), weekStartsOn = 1) {
-  const count = weekCount(habit, iso, weekStartsOn);
+export function weekStatus(habit, iso = todayISO()) {
+  const count = weekCount(habit, iso);
   const target = Math.max(0, Number(habit?.weeklyTarget) || 0);
   return { count, target, met: target > 0 && count >= target, ratio: target ? Math.min(1, count / target) : 0 };
 }
@@ -40,15 +40,15 @@ export function weekStatus(habit, iso = todayISO(), weekStartsOn = 1) {
  * `iso`. The current week only counts once it has already met target -- a week
  * still in progress neither extends nor breaks the streak.
  */
-export function streakWeeks(habit, iso = todayISO(), weekStartsOn = 1) {
-  let cursor = startOfWeek(iso, weekStartsOn);
+export function streakWeeks(habit, iso = todayISO()) {
+  let cursor = startOfWeek(iso);
   let streak = 0;
-  const current = weekStatus(habit, cursor, weekStartsOn);
+  const current = weekStatus(habit, cursor);
   if (current.met) streak += 1;
   cursor = addDays(cursor, -7);
   // Cap the walk-back so a corrupt date can never spin here.
   for (let i = 0; i < 520; i += 1) {
-    const status = weekStatus(habit, cursor, weekStartsOn);
+    const status = weekStatus(habit, cursor);
     if (!status.met) break;
     streak += 1;
     cursor = addDays(cursor, -7);
@@ -71,12 +71,12 @@ export function dayStreak(habit, today = todayISO()) {
 }
 
 /** Most recent `weeks` weeks, oldest first. */
-export function consistency(habit, { today = todayISO(), weeks = 12, weekStartsOn = 1 } = {}) {
-  const thisWeek = startOfWeek(today, weekStartsOn);
+export function consistency(habit, { today = todayISO(), weeks = 12 } = {}) {
+  const thisWeek = startOfWeek(today);
   const out = [];
   for (let i = weeks - 1; i >= 0; i -= 1) {
     const start = addDays(thisWeek, -7 * i);
-    const status = weekStatus(habit, start, weekStartsOn);
+    const status = weekStatus(habit, start);
     out.push({ weekStart: start, ...status, current: start === thisWeek });
   }
   return out;
@@ -86,13 +86,13 @@ export function habitsNotLoggedToday(state, today = todayISO()) {
   return (state?.habits ?? []).filter((h) => !h.archived && !loggedToday(h, today));
 }
 
-export function habitSummary(state, { today = todayISO(), weekStartsOn = 1 } = {}) {
+export function habitSummary(state, { today = todayISO() } = {}) {
   return (state?.habits ?? [])
     .filter((h) => !h.archived)
     .map((habit) => ({
       habit,
-      ...weekStatus(habit, today, weekStartsOn),
-      streak: streakWeeks(habit, today, weekStartsOn),
+      ...weekStatus(habit, today),
+      streak: streakWeeks(habit, today),
       loggedToday: loggedToday(habit, today),
     }));
 }

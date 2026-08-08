@@ -34,7 +34,7 @@ export function render(ctx) {
   const date = ctx.route.query.get('date') || ctx.today;
   const settings = ctx.state.settings;
   const totals = dayTotals(ctx.state, date);
-  const week = weeklyDistribution(ctx.state, { weekStart: startOfWeek(date, settings.weekStartsOn) });
+  const week = weeklyDistribution(ctx.state, { weekStart: startOfWeek(date) });
 
   return el('div', [
     pageHead('Time', {
@@ -150,7 +150,7 @@ function findTaskTitle(state, taskId) {
 }
 
 function weekStrip(ctx, date) {
-  const start = startOfWeek(date, ctx.state.settings.weekStartsOn);
+  const start = startOfWeek(date);
   return el('div.row', { style: { marginTop: 'var(--sp-4)' } }, weekDates(start).map((day) => {
     const totals = dayTotals(ctx.state, day);
     return el('a.week-day' + (day === date ? '.week-day--on' : '') + (day === ctx.today ? '.week-day--today' : ''), {

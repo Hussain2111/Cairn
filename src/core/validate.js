@@ -13,6 +13,11 @@ import {
   DIFFICULTIES,
   APPLICATION_STATUSES,
   READING_STATUSES,
+  READING_SOURCES,
+  MUSCLE_GROUPS,
+  HABIT_KINDS,
+  CHESS_COLOURS,
+  CHESS_RESULTS,
   deepClone,
 } from './schema.js';
 import { isValidISODate, isValidTime } from './dates.js';
@@ -95,6 +100,17 @@ function fixArray(container, key, path, report) {
     report.warn(path, 'expected a list — replaced with an empty list');
     container[key] = [];
   }
+}
+
+/** A count, a weight or a duration: a non-negative number, or nothing at all. */
+function positiveOrNull(value, path, report) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) {
+    report.warn(path, `"${value}" is not a usable number — cleared`);
+    return null;
+  }
+  return n;
 }
 
 function fixLinks(container, path, report) {
@@ -329,6 +345,7 @@ function validateRest(state, report) {
     }
     if (!habit.id) habit.id = `hab_recovered_${i}`;
     fixString(habit, 'name', `${path}.name`, report, { fallback: 'Untitled habit' });
+    fixEnum(habit, 'kind', HABIT_KINDS, `${path}.kind`, report, 'simple');
     const target = Number(habit.weeklyTarget);
     habit.weeklyTarget = Number.isFinite(target) && target > 0 ? Math.round(target) : 1;
     fixArray(habit, 'log', `${path}.log`, report);
@@ -336,6 +353,87 @@ function validateRest(state, report) {
     habit.log = [...new Set(habit.log.filter((d) => isValidISODate(d)))].sort();
     if (habit.log.length !== before) {
       report.warn(`${path}.log`, `${before - habit.log.length} invalid or duplicate log date(s) removed`);
+    }
+    return true;
+  });
+
+  state.exercises = state.exercises.filter((exercise, i) => {
+    const path = `exercises[${i}]`;
+    if (!isObject(exercise)) {
+      report.error(path, 'exercise is not an object');
+      return true;
+    }
+    if (!exercise.id) exercise.id = `ex_recovered_${i}`;
+    fixString(exercise, 'name', `${path}.name`, report, { fallback: 'Untitled exercise' });
+    if (!exercise.name.trim()) exercise.name = 'Untitled exercise';
+    fixEnum(exercise, 'muscle', MUSCLE_GROUPS, `${path}.muscle`, report, 'core');
+    exercise.retired = !!exercise.retired;
+    return true;
+  });
+
+  state.gymSessions = state.gymSessions.filter((session, i) => {
+    const path = `gymSessions[${i}]`;
+    if (!isObject(session)) {
+      report.error(path, 'gym session is not an object');
+      return true;
+    }
+    if (!session.id) session.id = `gym_recovered_${i}`;
+    fixString(session, 'notes', `${path}.notes`, report);
+    fixDate(session, 'date', `${path}.date`, report);
+    if (!session.date) {
+      report.warn(path, 'gym session has no date — it is kept but will not count towards any week');
+    }
+    if (session.startTime && !isValidTime(session.startTime)) {
+      report.warn(`${path}.startTime`, `"${session.startTime}" is not a valid HH:MM time — cleared`);
+      session.startTime = null;
+    }
+    session.durationMinutes = positiveOrNull(session.durationMinutes, `${path}.durationMinutes`, report);
+    session.warmup = !!session.warmup;
+    session.warmupMinutes = positiveOrNull(session.warmupMinutes, `${path}.warmupMinutes`, report);
+    fixArray(session, 'exercises', `${path}.exercises`, report);
+    session.exercises = session.exercises.filter((entry, ei) => {
+      const ePath = `${path}.exercises[${ei}]`;
+      if (!isObject(entry)) {
+        report.error(ePath, 'session exercise is not an object');
+        return true;
+      }
+      if (!entry.id) entry.id = `sx_recovered_${i}_${ei}`;
+      fixArray(entry, 'sets', `${ePath}.sets`, report);
+      entry.sets = entry.sets.filter((set, si) => {
+        const sPath = `${ePath}.sets[${si}]`;
+        if (!isObject(set)) {
+          report.error(sPath, 'set is not an object');
+          return true;
+        }
+        if (!set.id) set.id = `set_recovered_${i}_${ei}_${si}`;
+        set.reps = positiveOrNull(set.reps, `${sPath}.reps`, report);
+        set.weight = positiveOrNull(set.weight, `${sPath}.weight`, report);
+        return true;
+      });
+      return true;
+    });
+    return true;
+  });
+
+  state.chessGames = state.chessGames.filter((game, i) => {
+    const path = `chessGames[${i}]`;
+    if (!isObject(game)) {
+      report.error(path, 'chess game is not an object');
+      return true;
+    }
+    if (!game.id) game.id = `chess_recovered_${i}`;
+    for (const key of ['url', 'opening', 'lesson', 'venue']) {
+      fixString(game, key, `${path}.${key}`, report);
+    }
+    fixEnum(game, 'colour', CHESS_COLOURS, `${path}.colour`, report, 'white');
+    fixEnum(game, 'result', CHESS_RESULTS, `${path}.result`, report, 'draw');
+    fixDate(game, 'date', `${path}.date`, report);
+    game.opponentRating = positiveOrNull(game.opponentRating, `${path}.opponentRating`, report);
+    if (!game.lesson.trim()) {
+      // The lesson is what the whole view is for, and the editor will not save
+      // a game without one. A file that has one anyway is kept -- refusing the
+      // import would lose the game entirely -- but it is said out loud.
+      report.warn(path, 'chess game has no "what I learned" line — it is kept, but it will not appear on the lessons page');
     }
     return true;
   });
@@ -350,10 +448,35 @@ function validateRest(state, report) {
     fixString(book, 'title', `${path}.title`, report, { fallback: 'Untitled' });
     fixString(book, 'author', `${path}.author`, report);
     fixString(book, 'notes', `${path}.notes`, report);
+    fixString(book, 'fileName', `${path}.fileName`, report);
     fixEnum(book, 'status', READING_STATUSES, `${path}.status`, report, 'reading');
+    if (!READING_SOURCES.includes(book.source)) book.source = 'manual';
     if (!['page', 'percent'].includes(book.unit)) book.unit = 'page';
     const pos = Number(book.position);
     book.position = Number.isFinite(pos) && pos >= 0 ? pos : 0;
+    book.pageCount = positiveOrNull(book.pageCount, `${path}.pageCount`, report);
+    book.fileSize = Number.isFinite(Number(book.fileSize)) ? Number(book.fileSize) : 0;
+    if (book.cover !== null && book.cover !== undefined && typeof book.cover !== 'string') {
+      report.warn(`${path}.cover`, 'cover is not an image — cleared');
+      book.cover = null;
+    }
+    if (book.cover === undefined) book.cover = null;
+    fixArray(book, 'bookmarks', `${path}.bookmarks`, report);
+    book.bookmarks = book.bookmarks.filter((mark, bi) => {
+      const bPath = `${path}.bookmarks[${bi}]`;
+      if (!isObject(mark)) {
+        report.error(bPath, 'bookmark is not an object');
+        return true;
+      }
+      if (!mark.id) mark.id = `bm_recovered_${i}_${bi}`;
+      fixString(mark, 'note', `${bPath}.note`, report);
+      const page = Number(mark.page);
+      if (!Number.isInteger(page) || page < 1) {
+        report.warn(bPath, `page "${mark.page}" is not a page number — the bookmark is kept, pointing at page 1`);
+        mark.page = 1;
+      }
+      return true;
+    });
     return true;
   });
 
@@ -405,6 +528,50 @@ function crossCheck(state, report) {
     if (note.attach?.id && note.attach.type === 'thread' && !threadIds.has(note.attach.id)) {
       report.warn(`notes[${note.id}]`, 'attached to a thread that is not in this file — kept as standalone');
       note.attach = null;
+    }
+  }
+
+  // A session whose habit is missing would be invisible and uncountable, so it
+  // is re-homed onto a gym habit rather than left orphaned.
+  const gymHabits = (state.habits ?? []).filter((h) => h.kind === 'gym');
+  const habitIds = new Set((state.habits ?? []).map((h) => h.id));
+  const exerciseIds = new Set((state.exercises ?? []).map((e) => e.id));
+
+  for (const session of state.gymSessions ?? []) {
+    if (!session.habitId || !habitIds.has(session.habitId)) {
+      if (gymHabits.length === 1) {
+        report.warn(`gymSessions[${session.id}]`, `belongs to a habit that is not in this file — moved to "${gymHabits[0].name}"`);
+        session.habitId = gymHabits[0].id;
+      } else {
+        report.warn(`gymSessions[${session.id}]`, 'belongs to a habit that is not in this file — the session is kept but will not appear under any habit');
+      }
+    }
+    for (const entry of session.exercises ?? []) {
+      if (entry.exerciseId && !exerciseIds.has(entry.exerciseId)) {
+        // Kept, not dropped: the sets are the record, and the view names an
+        // unknown id rather than rendering a blank row.
+        report.warn(
+          `gymSessions[${session.id}]`,
+          'includes an exercise that is not in this file — the sets are kept and shown as "Removed exercise"',
+        );
+      }
+    }
+  }
+
+  // The date log of a gym habit is a mirror of its session dates. An import
+  // that disagrees is corrected here rather than showing two different answers
+  // for "how many times this week".
+  for (const habit of gymHabits) {
+    const fromSessions = [...new Set(
+      (state.gymSessions ?? []).filter((s) => s.habitId === habit.id && s.date).map((s) => s.date),
+    )].sort();
+    const current = [...new Set(habit.log ?? [])].sort();
+    if (fromSessions.join('|') !== current.join('|')) {
+      report.warn(
+        `habits[${habit.id}].log`,
+        `the logged days did not match the ${fromSessions.length} recorded session(s) — rebuilt from the sessions`,
+      );
+      habit.log = fromSessions;
     }
   }
 }
@@ -522,6 +689,9 @@ export function summarise(state) {
     applications: (state.applications ?? []).length,
     outreach: (state.outreach ?? []).length,
     habits: (state.habits ?? []).length,
+    exercises: (state.exercises ?? []).length,
+    gymSessions: (state.gymSessions ?? []).length,
+    chessGames: (state.chessGames ?? []).length,
     reading: (state.reading ?? []).length,
     timeBlocks: (state.timeBlocks ?? []).length,
   };

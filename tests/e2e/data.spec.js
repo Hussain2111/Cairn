@@ -152,14 +152,20 @@ test('an older-schema file migrates on import and reports what changed', async (
       questions: window.cairn.store.state.questions.map((q) => [q.id, q.bank]),
       stageForced: window.cairn.store.state.threads[0].stages[0].forceCompleted,
       version: window.cairn.store.state.schemaVersion,
+      habitKinds: window.cairn.store.state.habits.map((h) => h.kind),
+      collections: ['exercises', 'gymSessions', 'chessGames'].filter(
+        (key) => Array.isArray(window.cairn.store.state[key]),
+      ),
     };
   }, v1);
 
   expect(report.ok).toBe(true);
-  expect(report.version).toBe(2);
+  // A v1 file runs the whole chain, not just the first step.
+  expect(report.version).toBe(3);
   expect(report.questions).toEqual([['q1', 'sql']]);
   expect(report.stageForced).toBe(true);
   expect(report.notes.join(' ')).toContain('migrated from schema v1');
+  expect(report.collections).toEqual(['exercises', 'gymSessions', 'chessGames']);
 });
 
 test('a repairable file loads with every repair reported and nothing dropped', async ({ page }) => {
