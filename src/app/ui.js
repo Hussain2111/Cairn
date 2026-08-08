@@ -7,11 +7,21 @@
  * either a property (when it exists on the node) or an attribute.
  */
 export function el(spec, props = {}, children = []) {
-  const [tagPart, ...classParts] = String(spec).split('.');
-  const [tag, id] = tagPart.split('#');
-  const node = document.createElement(tag || 'div');
+  // The id may appear anywhere in the spec ('div#main.card' or 'div.card#main'),
+  // so it is lifted out before the classes are split off.
+  let rest = String(spec);
+  let id = '';
+  const hash = rest.indexOf('#');
+  if (hash >= 0) {
+    const after = rest.slice(hash + 1);
+    const end = after.indexOf('.');
+    id = end >= 0 ? after.slice(0, end) : after;
+    rest = rest.slice(0, hash) + (end >= 0 ? after.slice(end) : '');
+  }
+  const [tagPart, ...classParts] = rest.split('.');
+  const node = document.createElement(tagPart || 'div');
   if (id) node.id = id;
-  if (classParts.length) node.className = classParts.join(' ');
+  if (classParts.length) node.className = classParts.filter(Boolean).join(' ');
 
   if (Array.isArray(props) || typeof props === 'string' || props instanceof Node) {
     children = props;

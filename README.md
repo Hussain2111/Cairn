@@ -34,6 +34,8 @@ Completion and unlocking are *derived* on every read, never stored. That is what
 
 **Threads** — the tree view, with progress rolled up from tasks through steps to stages. Links and notes attach at any level.
 
+**Import outline** — paste a plan drafted anywhere (including a chat) and it becomes threads, stages, steps and tasks. See below.
+
 **Question banks** — SQL, LeetCode and GRE, with spaced repetition on a 0 / 2 / 7 / 21-day schedule. A failed or aided attempt resets the interval chain; a question retires only when solved unaided at the final interval. Every attempt records what you hesitated on, which over time is more useful than the score.
 
 **Notes** — markdown pages, attachable to anything, with templates for daily logs, stage retrospectives, question write-ups, application records and weekly reviews. You can write your own templates too.
@@ -60,6 +62,41 @@ The scheduler is the part it's worth being precise about.
 - A question **retires** when it is solved unaided, with no hesitation recorded, at the final interval.
 
 The attempt dialog states what the scheduler will do *before* you commit to it.
+
+## Importing an outline
+
+Typing a whole project in a dialog at a time is the fastest way to not use this tool. **Threads → Import outline** takes a plain-text plan instead:
+
+```
+# Compiler project (project)
+
+## Lexer
+> every token type has a passing test and the fuzzer runs clean for 10k inputs
+### Numbers
+- Integer literals @45m
+- Float literals ^2026-09-01
+### Strings
+- Escapes
+
+## Parser
+> the grammar round-trips every fixture in tests/fixtures
+### Expressions
+- Precedence climbing @2h
+```
+
+`#` thread (type in brackets, defaults to project) · `##` stage · `>` its done-when · `###` step · `-` task, with `@45m` for an estimate and `^YYYY-MM-DD` for a due date. Bullets can be `-`, `*`, `+` or numbered, and a code fence wrapped around the whole paste is ignored.
+
+The dialog has a **Copy the prompt for a chat** button, so the loop is: describe the project to a chat, paste the answer in, confirm.
+
+The parser is deliberately strict, because the failure that matters is not a rejected import — it is an import that quietly created four of your six stages:
+
+- **Every line must classify.** An unrecognised line is a blocking error carrying its line number and the offending text. Nothing is skipped.
+- **Counts are self-checked.** Markers found in the text must equal records produced; a mismatch refuses the import rather than passing quietly.
+- **Done-when is mandatory.** A stage without one blocks the import and names itself. A chat will omit it constantly, and such a stage would be unstartable anyway.
+- **Duplicates are surfaced, never created by accident.** A thread name you already have appends its stages to that thread instead of making a second one; stage titles that already exist there are called out before you commit.
+- **Anything inferred is reported.** Tasks written directly under a stage get a step called "Tasks" — allowed, but shown as a warning in the preview.
+
+Nothing is written until you confirm, and the whole import is a single undoable step.
 
 ## Dates
 
@@ -92,7 +129,7 @@ npm run test:e2e   # Playwright end-to-end
 npm run test:all   # both
 ```
 
-**Unit tests** cover the logic rather than the interface: stage unlocking including reordering and force-unlock, progress rollup from tasks upward, the spaced-repetition scheduler including resets, hesitation and retirement, stall detection, weekly streaks and consistency, pipeline needs-action rules, local-time date arithmetic, persistence with undo/quota/multi-tab conflicts, and the import validator against malformed input.
+**Unit tests** cover the logic rather than the interface: stage unlocking including reordering and force-unlock, progress rollup from tasks upward, the spaced-repetition scheduler including resets, hesitation and retirement, stall detection, weekly streaks and consistency, pipeline needs-action rules, local-time date arithmetic, persistence with undo/quota/multi-tab conflicts, the outline parser against malformed and adversarial input, and the import validator.
 
 **End-to-end tests** cover the flows that matter: completing a stage unlocks the next and only the next; a failed attempt schedules correctly and appears in the review queue on the right day; export then import round-trips state exactly. Plus the edge cases — a due task inside a locked stage staying out of "needs action", archiving instead of deleting completed work, force-completion being recorded, a full storage quota, a second tab writing, and the narrow-screen layout.
 

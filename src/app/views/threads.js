@@ -4,6 +4,7 @@ import { el, meter, tag, empty } from '../ui.js';
 import { pageHead, editRecord } from './shared.js';
 import { threadProgress, nextTask, threadStall } from '../../core/threads.js';
 import { makeThread, makeStage, THREAD_TYPES } from '../../core/schema.js';
+import { openOutlineImport } from './outline-import.js';
 import { formatDate } from '../../core/dates.js';
 
 export function title() {
@@ -28,6 +29,7 @@ export function render(ctx) {
     pageHead('Threads', {
       sub: 'One tree per area of your life. Stages unlock in order.',
       actions: [
+        el('button.btn', { type: 'button', text: 'Import outline', onclick: () => openOutlineImport(ctx) }),
         el('button.btn.btn--primary', { type: 'button', text: 'New thread', onclick: () => newThread(ctx) }),
       ],
     }),
@@ -59,8 +61,11 @@ function emptyFor(ctx, filter) {
   }
   return empty(
     'No threads yet',
-    'Start with one area of your life — a project, a course, the job hunt. You will break it into stages, and each stage into tasks small enough to start.',
-    el('button.btn.btn--primary', { type: 'button', text: 'Create the first thread', onclick: () => newThread(ctx) }),
+    'Start with one area of your life — a project, a course, the job hunt. You will break it into stages, and each stage into tasks small enough to start. Build it here, or paste a plan you drafted elsewhere.',
+    el('div.row', [
+      el('button.btn.btn--primary', { type: 'button', text: 'Create the first thread', onclick: () => newThread(ctx) }),
+      el('button.btn', { type: 'button', text: 'Import an outline', onclick: () => openOutlineImport(ctx) }),
+    ]),
   );
 }
 
