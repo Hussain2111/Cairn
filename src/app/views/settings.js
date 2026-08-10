@@ -5,6 +5,7 @@ import { el, tag, empty, confirm, toast, downloadFile, openDialog } from '../ui.
 import { pageHead, statTile, editRecord } from './shared.js';
 import { MUSCLE_GROUPS, makeExercise } from '../../core/schema.js';
 import { allExercises, exerciseUsage, exerciseNameTaken, seedExercises } from '../../core/gym.js';
+import { pruneOrphans } from '../books-db.js';
 import { normaliseIntervals } from '../../core/srs.js';
 import { summarise } from '../../core/validate.js';
 import { formatDate, stampToDate, formatLongDate } from '../../core/dates.js';
@@ -95,6 +96,13 @@ export function render(ctx) {
       el('p.field__hint', {
         text: 'Everything lives in this browser. Clearing site data deletes it — export regularly. Import validates the file first and tells you exactly what it found.',
       }),
+      // The one thing the JSON does not contain, said before it is missed
+      // rather than after.
+      summary.reading
+        ? el('p.field__hint', {
+            text: `The export does not include the ${summary.reading} book file(s) on your shelf — a PDF library runs to hundreds of megabytes and does not belong in a JSON file. It does carry every book\'s title, your place in it and its bookmarks, so importing the PDFs again reattaches them. Reading › Storage has "Save every book file" for getting the files themselves back out.`,
+          })
+        : null,
     ]),
 
     exercisesSection(ctx),
@@ -117,6 +125,11 @@ export function render(ctx) {
             return;
           }
           if (answer !== 'confirm') return;
+          // The book files live outside the state object, so clearing the
+          // state would otherwise leave megabytes of orphaned PDFs behind with
+          // nothing left in the interface to reach them.
+          const files = await pruneOrphans([]);
+          if (files) toast(`${files} book file(s) deleted as well.`);
           ctx.commit('delete all data', (state) => {
             state.threads.length = 0;
             state.notes.length = 0;

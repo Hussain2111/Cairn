@@ -154,14 +154,37 @@ export function search(state, query, { limit = 80 } = {}) {
   }
 
   for (const book of state?.reading ?? []) {
+    const marks = (book.bookmarks ?? []).map((mark) => mark.note).filter(Boolean).join(' ');
     push({
       type: 'reading',
       id: book.id,
       title: book.title,
       context: book.author,
-      snippet: snippet(book.notes, needle),
-      route: '#/reading',
-      score: Math.max(boost(score(book.title, needle), 5), score(book.author, needle), score(book.notes, needle)),
+      snippet: snippet(book.notes || marks, needle),
+      route: `#/reading/${book.id}`,
+      score: Math.max(
+        boost(score(book.title, needle), 5),
+        score(book.author, needle),
+        score(book.notes, needle),
+        // Bookmark notes are the reason a bookmark is worth making, so they are
+        // findable the same way a hesitation is.
+        score(marks, needle),
+      ),
+    });
+  }
+
+  for (const game of state?.chessGames ?? []) {
+    push({
+      type: 'chess',
+      id: game.id,
+      title: game.lesson || `${game.result} as ${game.colour}`,
+      context: [game.opening, game.venue].filter(Boolean).join(' · '),
+      snippet: snippet(game.lesson, needle),
+      route: '#/chess/lessons',
+      score: Math.max(
+        score(game.lesson, needle),
+        boost(score(game.opening, needle), 3),
+      ),
     });
   }
 

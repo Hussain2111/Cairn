@@ -5,7 +5,7 @@
 // a fresh copy replaces it in the background. Bump CACHE_VERSION on release to
 // evict the old shell.
 
-const CACHE_VERSION = 'cairn-v1';
+const CACHE_VERSION = 'cairn-v2';
 
 const SHELL = [
   './',
