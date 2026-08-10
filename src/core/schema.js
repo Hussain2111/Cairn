@@ -7,7 +7,7 @@
 import { uid } from './ids.js';
 import { todayISO, nowStamp } from './dates.js';
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export const STORAGE_KEY = 'cairn.state';
 export const APP_VERSION = '1.0.0';
 
@@ -39,6 +39,36 @@ export const APPLICATION_STATUSES = ['applied', 'screening', 'interview', 'offer
 export const APPLICATION_SOURCES = ['Hiring Cafe', 'LinkedIn', 'referral', 'direct', 'other'];
 export const OUTREACH_CHANNELS = ['LinkedIn', 'Threads', 'email', 'other'];
 export const READING_STATUSES = ['to read', 'reading', 'paused', 'finished', 'abandoned'];
+export const READING_SOURCES = ['manual', 'pdf'];
+
+export const HABIT_KINDS = ['simple', 'gym'];
+
+/** The primary muscle group an exercise trains. Fixed list, deliberately short. */
+export const MUSCLE_GROUPS = ['chest', 'back', 'shoulders', 'legs', 'arms', 'core'];
+
+export const CHESS_COLOURS = ['white', 'black'];
+export const CHESS_RESULTS = ['win', 'loss', 'draw'];
+export const CHESS_VENUES = ['chess.com', 'lichess', 'over the board', 'other'];
+
+/** Seeded the first time a gym habit is created, so logging can start at once. */
+export const STARTER_EXERCISES = [
+  ['Bench press', 'chest'],
+  ['Incline dumbbell press', 'chest'],
+  ['Push-up', 'chest'],
+  ['Pull-up', 'back'],
+  ['Barbell row', 'back'],
+  ['Lat pulldown', 'back'],
+  ['Overhead press', 'shoulders'],
+  ['Lateral raise', 'shoulders'],
+  ['Squat', 'legs'],
+  ['Deadlift', 'legs'],
+  ['Leg press', 'legs'],
+  ['Romanian deadlift', 'legs'],
+  ['Barbell curl', 'arms'],
+  ['Triceps pushdown', 'arms'],
+  ['Plank', 'core'],
+  ['Hanging leg raise', 'core'],
+];
 
 export const DEFAULT_SETTINGS = {
   theme: 'system',
@@ -47,7 +77,6 @@ export const DEFAULT_SETTINGS = {
   pipelineIdleDays: 14,
   dayStartHour: 8,
   dayEndHour: 22,
-  weekStartsOn: 1,
 };
 
 // --- factories --------------------------------------------------------------
@@ -167,20 +196,100 @@ export function makeOutreach(patch = {}) {
   };
 }
 
-export function makeHabit({ name = '', weeklyTarget = 3 } = {}) {
-  return { id: uid('hab'), name, weeklyTarget, log: [], archived: false, createdAt: todayISO() };
+/**
+ * A habit is a name, a weekly target and a log of dates. `kind: 'gym'` adds
+ * sessions on top of that — it never replaces the log, so weekly targets,
+ * streaks and the weekly review keep working the same way for both kinds.
+ */
+export function makeHabit({ name = '', weeklyTarget = 3, kind = 'simple' } = {}) {
+  return {
+    id: uid('hab'),
+    name,
+    kind: HABIT_KINDS.includes(kind) ? kind : 'simple',
+    weeklyTarget,
+    log: [],
+    archived: false,
+    createdAt: todayISO(),
+  };
 }
 
+export function makeExercise({ name = '', muscle = 'chest' } = {}) {
+  return {
+    id: uid('ex'),
+    name,
+    muscle: MUSCLE_GROUPS.includes(muscle) ? muscle : 'chest',
+    retired: false,
+    createdAt: todayISO(),
+  };
+}
+
+export function makeSet({ reps = null, weight = null } = {}) {
+  return { id: uid('set'), reps: reps ?? null, weight: weight ?? null };
+}
+
+export function makeSessionExercise({ exerciseId = null, sets = [] } = {}) {
+  return { id: uid('sx'), exerciseId, sets: [...sets] };
+}
+
+export function makeGymSession(patch = {}) {
+  return {
+    id: uid('gym'),
+    habitId: null,
+    date: todayISO(),
+    startTime: null,
+    durationMinutes: null,
+    warmup: false,
+    warmupMinutes: null,
+    exercises: [],
+    notes: '',
+    createdAt: nowStamp(),
+    ...patch,
+  };
+}
+
+export function makeChessGame(patch = {}) {
+  return {
+    id: uid('chess'),
+    date: todayISO(),
+    colour: 'white',
+    result: 'win',
+    venue: 'chess.com',
+    opponentRating: null,
+    url: '',
+    opening: '',
+    // The one required field. A game logged without it isn't logged.
+    lesson: '',
+    createdAt: nowStamp(),
+    ...patch,
+  };
+}
+
+export function makeBookmark({ page = 1, note = '' } = {}) {
+  return { id: uid('bm'), page, note, createdAt: nowStamp() };
+}
+
+/**
+ * A book. `source: 'pdf'` means the bytes live in IndexedDB under this record's
+ * id — everything here stays small enough for localStorage, including the
+ * cover, which is a deliberately tiny JPEG.
+ */
 export function makeReading(patch = {}) {
   return {
     id: uid('read'),
     title: '',
     author: '',
+    source: 'manual',
+    fileName: '',
+    fileSize: 0,
+    pageCount: null,
+    cover: null,
     position: 0,
     unit: 'page',
     total: null,
     status: 'reading',
     notes: '',
+    bookmarks: [],
+    lastOpenedAt: null,
     updatedAt: todayISO(),
     createdAt: todayISO(),
     ...patch,
@@ -241,6 +350,9 @@ export function createEmptyState(templates = []) {
     applications: [],
     outreach: [],
     habits: [],
+    exercises: [],
+    gymSessions: [],
+    chessGames: [],
     reading: [],
     timeBlocks: [],
   };
@@ -256,6 +368,9 @@ export const COLLECTIONS = [
   'applications',
   'outreach',
   'habits',
+  'exercises',
+  'gymSessions',
+  'chessGames',
   'reading',
   'timeBlocks',
 ];

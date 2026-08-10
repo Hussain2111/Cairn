@@ -11,6 +11,10 @@ import {
   startOfWeek,
   endOfWeek,
   weekDates,
+  daysLeftInWeek,
+  isSameWeek,
+  weekdayInitials,
+  formatDate,
   relativeDay,
   timeToMinutes,
   minutesToTime,
@@ -72,14 +76,54 @@ test('diffDays is signed and inclusive of direction', () => {
   assert.equal(diffDays('nonsense', '2026-08-07'), null);
 });
 
-test('weeks start on Monday by default', () => {
-  assert.equal(startOfWeek('2026-08-07'), '2026-08-03'); // Fri -> Mon
-  assert.equal(startOfWeek('2026-08-03'), '2026-08-03');
-  assert.equal(startOfWeek('2026-08-09'), '2026-08-03'); // Sun belongs to the week just ending
-  assert.equal(endOfWeek('2026-08-07'), '2026-08-09');
-  assert.equal(startOfWeek('2026-08-09', 0), '2026-08-09'); // Sunday-start weeks
-  assert.deepEqual(weekDates('2026-08-03').length, 7);
-  assert.equal(weekDates('2026-08-03')[6], '2026-08-09');
+test('weeks run Sunday to Saturday', () => {
+  assert.equal(startOfWeek('2026-08-07'), '2026-08-02'); // Fri -> the Sunday before
+  assert.equal(startOfWeek('2026-08-02'), '2026-08-02'); // a Sunday is its own week start
+  assert.equal(endOfWeek('2026-08-02'), '2026-08-08'); // .. and ends on Saturday
+  assert.deepEqual(weekDates('2026-08-02').length, 7);
+  assert.equal(weekDates('2026-08-02')[6], '2026-08-08');
+});
+
+test('the boundary falls between Saturday and Sunday, not Sunday and Monday', () => {
+  const saturday = '2026-08-08';
+  const sunday = '2026-08-09';
+  const monday = '2026-08-10';
+
+  assert.equal(startOfWeek(saturday), '2026-08-02', 'Saturday closes the week that began on the 2nd');
+  assert.equal(startOfWeek(sunday), '2026-08-09', 'Sunday opens a new one');
+  assert.equal(startOfWeek(monday), '2026-08-09', 'Monday is the second day of that same week');
+  assert.notEqual(startOfWeek(saturday), startOfWeek(sunday), 'the one boundary in the week');
+  assert.equal(startOfWeek(sunday), startOfWeek(monday));
+  assert.equal(isSameWeek(saturday, sunday), false);
+  assert.equal(isSameWeek(sunday, '2026-08-15'), true);
+});
+
+test('there is exactly one week boundary in any seven consecutive days', () => {
+  let boundaries = 0;
+  let cursor = '2026-08-05';
+  for (let i = 0; i < 7; i += 1) {
+    const next = addDays(cursor, 1);
+    if (startOfWeek(cursor) !== startOfWeek(next)) boundaries += 1;
+    cursor = next;
+  }
+  assert.equal(boundaries, 1);
+});
+
+test('days left in the week counts today, and runs out on Saturday', () => {
+  assert.equal(daysLeftInWeek('2026-08-02'), 7, 'a whole week ahead on Sunday');
+  assert.equal(daysLeftInWeek('2026-08-07'), 2, 'Friday leaves Friday and Saturday');
+  assert.equal(daysLeftInWeek('2026-08-08'), 1, 'Saturday is the last of it');
+});
+
+test('the weekday strip is labelled in week order', () => {
+  assert.deepEqual(weekdayInitials(), ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa']);
+  // The labels and the dates have to agree, or the strip lies about which
+  // square is which day.
+  const dates = weekDates(startOfWeek('2026-08-07'));
+  const labels = weekdayInitials();
+  dates.forEach((iso, i) => {
+    assert.equal(formatDate(iso, { weekday: true }).slice(0, 2), labels[i]);
+  });
 });
 
 test('relative day phrasing', () => {

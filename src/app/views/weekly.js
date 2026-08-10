@@ -10,11 +10,10 @@ export function title() {
 }
 
 export function render(ctx) {
-  const weekStartsOn = ctx.state.settings.weekStartsOn;
-  const weekStart = ctx.route.query.get('week') || startOfWeek(ctx.today, weekStartsOn);
+  const weekStart = ctx.route.query.get('week') || startOfWeek(ctx.today);
   const report = generateWeeklyReview(ctx.state, { today: ctx.today, weekStart });
   const markdown = weeklyReviewMarkdown(report);
-  const thisWeek = startOfWeek(ctx.today, weekStartsOn);
+  const thisWeek = startOfWeek(ctx.today);
 
   return el('div', [
     pageHead('Weekly review', {

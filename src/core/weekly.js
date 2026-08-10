@@ -17,9 +17,8 @@ import { pipelineStats } from './pipelines.js';
 import { consistency, weekStatus } from './habits.js';
 
 export function generateWeeklyReview(state, { today = todayISO(), weekStart = null } = {}) {
-  const weekStartsOn = state?.settings?.weekStartsOn ?? 1;
-  const start = weekStart || startOfWeek(today, weekStartsOn);
-  const end = endOfWeek(start, weekStartsOn);
+  const start = weekStart || startOfWeek(today);
+  const end = endOfWeek(start);
   const inWeek = (iso) => !!iso && withinRange(iso, start, end);
 
   const threads = [];
@@ -66,8 +65,8 @@ export function generateWeeklyReview(state, { today = todayISO(), weekStart = nu
     .filter((h) => !h.archived)
     .map((habit) => ({
       habit,
-      ...weekStatus(habit, start, weekStartsOn),
-      history: consistency(habit, { today: start, weeks: 6, weekStartsOn }),
+      ...weekStatus(habit, start),
+      history: consistency(habit, { today: start, weeks: 6 }),
     }));
 
   const reading = (state?.reading ?? []).filter((b) => b.status === 'reading');

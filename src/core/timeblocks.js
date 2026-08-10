@@ -54,8 +54,8 @@ export function dayTotals(state, iso) {
  * Hours per thread across a week. This is the view that tends to disagree with
  * how the week felt, which is the reason it exists.
  */
-export function weeklyDistribution(state, { today = todayISO(), weekStart = null, weekStartsOn = 1 } = {}) {
-  const start = weekStart || startOfWeek(today, weekStartsOn);
+export function weeklyDistribution(state, { today = todayISO(), weekStart = null } = {}) {
+  const start = weekStart || startOfWeek(today);
   const days = new Set(weekDates(start));
   const byThread = new Map();
   let planned = 0;

@@ -20,6 +20,7 @@ import * as timeView from './views/time.js';
 import * as weeklyView from './views/weekly.js';
 import * as habitsView from './views/habits.js';
 import * as readingView from './views/reading.js';
+import * as chessView from './views/chess.js';
 import * as searchView from './views/search.js';
 import * as settingsView from './views/settings.js';
 
@@ -36,6 +37,7 @@ const VIEWS = {
   time: timeView,
   weekly: weeklyView,
   habits: habitsView,
+  chess: chessView,
   reading: readingView,
   search: searchView,
   settings: settingsView,
@@ -144,6 +146,7 @@ function renderSidebar() {
         navLink('#/weekly', 'Weekly review'),
         el('div.nav__section', { text: 'Keep going' }),
         navLink('#/habits', 'Habits', habits || null, true),
+        navLink('#/chess', 'Chess', state.chessGames.length || null, true),
         navLink('#/reading', 'Reading', state.reading.length || null, true),
       ]),
       stalled

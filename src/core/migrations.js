@@ -53,8 +53,65 @@ function v1_to_v2(input) {
   return { state, notes };
 }
 
+/**
+ * v2 → v3
+ *   - weeks became Sunday-to-Saturday everywhere, and the week start stopped
+ *     being a setting: it is now a single constant in dates.js. An old file's
+ *     `settings.weekStartsOn` is dropped rather than silently obeyed, because
+ *     obeying it would give one user Monday weeks and no way to say so.
+ *   - habits gained a `kind`, so the gym can carry sessions while everything
+ *     else stays a name, a target and a log of dates.
+ *   - new collections: exercises, gymSessions, chessGames.
+ *   - books gained a source, a page count, bookmarks and cover/file metadata.
+ *     Everything that existed before was typed in by hand, so it becomes
+ *     `source: 'manual'` and keeps its position untouched.
+ */
+function v2_to_v3(input) {
+  const state = deepClone(input);
+  const notes = [];
+
+  if (state.settings && Object.prototype.hasOwnProperty.call(state.settings, 'weekStartsOn')) {
+    const was = state.settings.weekStartsOn;
+    delete state.settings.weekStartsOn;
+    if (was !== 0) notes.push('weeks now run Sunday to Saturday — the old Monday week start was dropped');
+  }
+
+  for (const key of ['exercises', 'gymSessions', 'chessGames']) {
+    if (!Array.isArray(state[key])) state[key] = [];
+  }
+
+  let habits = 0;
+  for (const habit of state.habits ?? []) {
+    if (habit && typeof habit === 'object' && habit.kind === undefined) {
+      habit.kind = 'simple';
+      habits += 1;
+    }
+  }
+  if (habits) notes.push(`marked ${habits} habit(s) as simple day-log habits`);
+
+  let books = 0;
+  for (const book of state.reading ?? []) {
+    if (!book || typeof book !== 'object') continue;
+    if (book.source === undefined) {
+      book.source = 'manual';
+      books += 1;
+    }
+    if (book.fileName === undefined) book.fileName = '';
+    if (book.fileSize === undefined) book.fileSize = 0;
+    if (book.pageCount === undefined) book.pageCount = null;
+    if (book.cover === undefined) book.cover = null;
+    if (book.lastOpenedAt === undefined) book.lastOpenedAt = null;
+    if (!Array.isArray(book.bookmarks)) book.bookmarks = [];
+  }
+  if (books) notes.push(`kept ${books} hand-tracked book(s) as they were, alongside the new imported ones`);
+
+  state.schemaVersion = 3;
+  return { state, notes };
+}
+
 export const MIGRATIONS = {
   1: v1_to_v2,
+  2: v2_to_v3,
 };
 
 export const OLDEST_SUPPORTED_VERSION = 1;

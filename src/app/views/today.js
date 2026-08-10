@@ -10,6 +10,7 @@ import { upNext, actionableDueTasks, stalledThreads } from '../../core/threads.j
 import { reviewQueue } from '../../core/srs.js';
 import { needsAction, describeReason } from '../../core/pipelines.js';
 import { habitSummary, toggleLog } from '../../core/habits.js';
+import { isGymHabit } from '../../core/gym.js';
 import { blocksForDate, plannedMinutes, actualMinutes, hasActual } from '../../core/timeblocks.js';
 import { formatLongDate, formatDuration, nowStamp } from '../../core/dates.js';
 import { newThread } from './threads.js';
@@ -25,7 +26,7 @@ export function render(ctx) {
   const actions = needsAction(ctx.state, { today });
   const dueTasks = actionableDueTasks(ctx.state, { today });
   const blocks = blocksForDate(ctx.state, today);
-  const habits = habitSummary(ctx.state, { today, weekStartsOn: ctx.state.settings.weekStartsOn });
+  const habits = habitSummary(ctx.state, { today });
   const stalled = stalledThreads(ctx.state, { today });
 
   return el('div', [
@@ -259,13 +260,23 @@ function blockRow(ctx, block) {
 
 function habitRow(ctx, entry, today) {
   const { habit, count, target, met, loggedToday } = entry;
+  // A gym habit's log is a mirror of its sessions, so ticking it here would be
+  // overwritten the next time one is saved. It links to the session form
+  // instead, which is where the day actually gets recorded.
+  const gym = isGymHabit(habit);
+
   return el('div.row.row--between', [
     el('div.row', [
-      el('button.btn.btn--sm' + (loggedToday ? '' : '.btn--ghost'), {
-        type: 'button',
-        text: loggedToday ? '✓ logged' : 'Log today',
-        onclick: () => ctx.commit('log habit', () => toggleLog(habit, today), { undoable: false }),
-      }),
+      gym
+        ? el('a.btn.btn--sm' + (loggedToday ? '' : '.btn--ghost'), {
+            href: `#/habits/${habit.id}`,
+            text: loggedToday ? '✓ session logged' : 'Log a session',
+          })
+        : el('button.btn.btn--sm' + (loggedToday ? '' : '.btn--ghost'), {
+            type: 'button',
+            text: loggedToday ? '✓ logged' : 'Log today',
+            onclick: () => ctx.commit('log habit', () => toggleLog(habit, today), { undoable: false }),
+          }),
       el('span', { text: habit.name }),
     ]),
     el('div.row', [
