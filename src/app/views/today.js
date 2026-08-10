@@ -11,7 +11,8 @@ import { reviewQueue } from '../../core/srs.js';
 import { needsAction, describeReason } from '../../core/pipelines.js';
 import { habitSummary, toggleLog } from '../../core/habits.js';
 import { isGymHabit } from '../../core/gym.js';
-import { blocksForDate, plannedMinutes, actualMinutes, hasActual } from '../../core/timeblocks.js';
+import { activityLabel } from '../../core/activities.js';
+import { blocksForDate, plannedMinutes, loggedMinutes, isLogged } from '../../core/timeblocks.js';
 import { formatLongDate, formatDuration, nowStamp } from '../../core/dates.js';
 import { newThread } from './threads.js';
 
@@ -98,7 +99,7 @@ export function render(ctx) {
         el('div.section__rule'),
         el('span.section__meta', {
           text: blocks.length
-            ? `${formatDuration(blocks.reduce((s, b) => s + plannedMinutes(b), 0))} planned · ${formatDuration(blocks.reduce((s, b) => s + actualMinutes(b), 0))} logged`
+            ? `${formatDuration(blocks.reduce((s, b) => s + plannedMinutes(b), 0))} planned · ${formatDuration(blocks.reduce((s, b) => s + loggedMinutes(b), 0))} logged`
             : 'nothing planned',
         }),
       ]),
@@ -242,17 +243,16 @@ function taskDueRow(ctx, entry) {
 }
 
 function blockRow(ctx, block) {
-  const thread = ctx.state.threads.find((t) => t.id === block.threadId);
   return el('div.row.row--between', [
     el('div', [
       el('span.mono', { text: `${block.start}–${block.end}` }),
       ' ',
-      el('span', { text: block.label || thread?.name || 'Unassigned' }),
+      el('span', { text: block.label || activityLabel(ctx.state, block.activity) }),
     ]),
     el('div.row', [
-      hasActual(block)
-        ? tag(`logged ${formatDuration(actualMinutes(block))}`, 'teal')
-        : tag('not logged'),
+      isLogged(block)
+        ? tag(`logged ${formatDuration(loggedMinutes(block))}`, 'teal')
+        : tag('planned'),
       el('a.btn.btn--ghost.btn--sm', { href: '#/time', text: 'Open' }),
     ]),
   ]);

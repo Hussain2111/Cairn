@@ -183,11 +183,11 @@ test('invalid habit log dates are dropped with a count, and valid ones survive',
 
 test('a time block pointing at a missing thread is kept, unassigned', () => {
   const state = goodState();
-  state.timeBlocks.push({ id: 'b1', date: '2026-08-07', start: '09:00', end: '10:00', threadId: 'thr_gone', taskId: 'task_gone', label: 'Deep work' });
+  state.timeBlocks.push({ id: 'b1', date: '2026-08-07', start: '09:00', end: '10:00', activity: 'thread:thr_gone', taskId: 'task_gone', label: 'Deep work' });
   const result = validateImport(JSON.stringify(state));
   assert.equal(result.ok, true);
   assert.equal(result.state.timeBlocks.length, 1);
-  assert.equal(result.state.timeBlocks[0].threadId, null);
+  assert.equal(result.state.timeBlocks[0].activity, null);
   assert.match(messages(result.warnings), /not in this file/);
 });
 

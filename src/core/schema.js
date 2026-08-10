@@ -7,7 +7,7 @@
 import { uid } from './ids.js';
 import { todayISO, nowStamp } from './dates.js';
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 export const STORAGE_KEY = 'cairn.state';
 export const APP_VERSION = '1.0.0';
 
@@ -296,17 +296,20 @@ export function makeReading(patch = {}) {
   };
 }
 
+/**
+ * One start, one end, one activity, one status. A plan and an account of what
+ * happened are two blocks, not two time pairs on one — see core/timeblocks.js.
+ */
 export function makeTimeBlock(patch = {}) {
   return {
     id: uid('blk'),
     date: todayISO(),
     start: '09:00',
     end: '10:00',
-    threadId: null,
+    activity: null,
     taskId: null,
     label: '',
-    actualStart: null,
-    actualEnd: null,
+    status: 'planned',
     notes: '',
     createdAt: nowStamp(),
     ...patch,

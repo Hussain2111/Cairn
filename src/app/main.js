@@ -157,19 +157,21 @@ function renderSidebar() {
     ]),
   );
 
+  // All three read as one list, so all three are the same component. Search and
+  // Shortcuts keep their handlers as buttons; only the styling is shared.
   sidebarNode.appendChild(
     el('div.sidebar__foot', [
-      el('button.btn.btn--ghost.btn--sm.btn--block', {
+      el('button.nav__link', {
         type: 'button',
-        text: 'Search  /',
+        text: 'Search',
         onclick: () => navigate('#/search'),
-      }),
-      el('a.nav__link', { href: '#/settings', text: 'Settings' }),
-      el('button.btn.btn--ghost.btn--sm.btn--block', {
+      }, [el('span.nav__key.mono', { text: '/' })]),
+      navLink('#/settings', 'Settings'),
+      el('button.nav__link', {
         type: 'button',
-        text: 'Shortcuts  ?',
+        text: 'Shortcuts',
         onclick: showShortcuts,
-      }),
+      }, [el('span.nav__key.mono', { text: '?' })]),
     ]),
   );
 }

@@ -109,9 +109,76 @@ function v2_to_v3(input) {
   return { state, notes };
 }
 
+/**
+ * v3 → v4
+ *   - a time block pointed at a thread and nothing else. It now points at an
+ *     "activity", which is a thread *or* one of the standing areas of the app,
+ *     so a week of gym, GRE and applications stops reading as unassigned.
+ *   - planned and actual were two time pairs on one record. They are now two
+ *     records with a status, which is what they always were. A block carrying
+ *     both is split in two: the plan keeps its times, and a second block is
+ *     created for what actually happened. Nothing is averaged or dropped.
+ */
+function v3_to_v4(input) {
+  const state = deepClone(input);
+  const notes = [];
+  const blocks = Array.isArray(state.timeBlocks) ? state.timeBlocks : [];
+  const created = [];
+  let reassigned = 0;
+  let split = 0;
+
+  for (const block of blocks) {
+    if (!block || typeof block !== 'object') continue;
+
+    if (block.activity === undefined) {
+      block.activity = block.threadId ? `thread:${block.threadId}` : null;
+      if (block.threadId) reassigned += 1;
+    }
+    delete block.threadId;
+
+    const hadActual = !!block.actualStart && !!block.actualEnd;
+    const hadPlan = !!block.start && !!block.end;
+
+    if (hadActual && hadPlan) {
+      created.push({
+        ...block,
+        id: `${block.id}_logged`,
+        start: block.actualStart,
+        end: block.actualEnd,
+        status: 'logged',
+        // The note was written about the doing, so it travels with the log.
+        notes: block.notes ?? '',
+      });
+      block.notes = '';
+      split += 1;
+      block.status = 'planned';
+    } else if (hadActual) {
+      // Only ever logged: it is the record of what happened.
+      block.start = block.actualStart;
+      block.end = block.actualEnd;
+      block.status = 'logged';
+    } else if (block.status === undefined) {
+      block.status = 'planned';
+    }
+
+    delete block.actualStart;
+    delete block.actualEnd;
+  }
+
+  if (created.length) blocks.push(...created);
+  state.timeBlocks = blocks;
+
+  if (reassigned) notes.push(`pointed ${reassigned} time block(s) at the thread they were assigned to`);
+  if (split) notes.push(`split ${split} time block(s) into the plan and the separate record of what was actually done`);
+
+  state.schemaVersion = 4;
+  return { state, notes };
+}
+
 export const MIGRATIONS = {
   1: v1_to_v2,
   2: v2_to_v3,
+  3: v3_to_v4,
 };
 
 export const OLDEST_SUPPORTED_VERSION = 1;

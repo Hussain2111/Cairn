@@ -93,9 +93,9 @@ test('a rejected application drops out of needs action', async ({ page }) => {
   await expect(page.getByText('Nothing needs action right now.')).toBeVisible();
 });
 
-test('a time block records planned versus actual and feeds the weekly distribution', async ({ page }) => {
+test('planned and logged are separate blocks, and the week compares them', async ({ page }) => {
   await page.goto('/#/time');
-  await page.getByRole('button', { name: 'Add block' }).click();
+  await page.getByRole('button', { name: 'Plan a block' }).click();
   let dialog = page.locator('dialog');
   await dialog.getByLabel('Start', { exact: true }).fill('09:00');
   await dialog.getByLabel('End', { exact: true }).fill('12:00');
@@ -105,25 +105,68 @@ test('a time block records planned versus actual and feeds the weekly distributi
   await expect(page.locator('.block')).toContainText('Deep work');
   await expect(page.locator('.row').first()).toContainText('3h planned');
 
-  await page.locator('.block').click();
+  // What actually happened is a second block, not an edit of the first.
+  await page.getByRole('button', { name: 'Log a block' }).click();
   dialog = page.locator('dialog');
-  await dialog.getByLabel('Actually started').fill('09:30');
-  await dialog.getByLabel('Actually ended').fill('11:00');
-  await dialog.getByRole('button', { name: 'Save' }).click();
+  await dialog.getByLabel('Start', { exact: true }).fill('09:30');
+  await dialog.getByLabel('End', { exact: true }).fill('11:00');
+  await dialog.getByLabel('Label').fill('Deep work');
+  await dialog.getByRole('button', { name: 'Add' }).click();
 
+  await expect(page.locator('.block')).toHaveCount(2);
   await expect(page.locator('.block--logged')).toBeVisible();
   await expect(page.locator('.dist')).toContainText('1h 30m / 3h');
 });
 
-test('overlapping blocks are flagged before they are saved', async ({ page }) => {
+test('a plan can be logged as done in one click', async ({ page }) => {
   await page.goto('/#/time');
-  await page.getByRole('button', { name: 'Add block' }).click();
+  await page.getByRole('button', { name: 'Plan a block' }).click();
+  const dialog = page.locator('dialog');
+  await dialog.getByLabel('Start', { exact: true }).fill('14:00');
+  await dialog.getByLabel('End', { exact: true }).fill('15:00');
+  await dialog.getByLabel('Label').fill('Reading');
+  await dialog.getByRole('button', { name: 'Add' }).click();
+
+  await page.getByRole('button', { name: 'Log the 14:00 block as done' }).click();
+  await expect(page.locator('.block--logged')).toBeVisible();
+  await expect(page.locator('.row').first()).toContainText('1h logged');
+  // Nothing left unlogged, so the offer disappears.
+  await expect(page.getByRole('button', { name: /Log the .* block as done/ })).toHaveCount(0);
+});
+
+test('a block can be assigned to the gym or the GRE, not only to a thread', async ({ page }) => {
+  await page.goto('/#/time');
+  await page.getByRole('button', { name: 'Log a block' }).click();
+  const dialog = page.locator('dialog');
+  await dialog.getByLabel('Start', { exact: true }).fill('18:00');
+  await dialog.getByLabel('End', { exact: true }).fill('19:30');
+  await dialog.getByLabel('Activity').selectOption({ label: 'Gym' });
+  await dialog.getByRole('button', { name: 'Add' }).click();
+
+  await expect(page.locator('.block')).toContainText('Gym');
+  await expect(page.locator('.dist')).toContainText('Gym');
+  await expect(page.locator('.dist')).toContainText('1h 30m / 0m');
+});
+
+test('the block form does not ask for a date — the day view already knows it', async ({ page }) => {
+  await page.goto('/#/time');
+  await page.getByRole('button', { name: 'Plan a block' }).click();
+  const dialog = page.locator('dialog');
+  await expect(dialog.getByLabel('Date')).toHaveCount(0);
+  await expect(dialog.getByLabel('Actually started')).toHaveCount(0);
+  await expect(dialog.getByLabel('Actually ended')).toHaveCount(0);
+  await expect(dialog.getByLabel('Status')).toBeVisible();
+});
+
+test('overlapping blocks of the same kind are flagged before they are saved', async ({ page }) => {
+  await page.goto('/#/time');
+  await page.getByRole('button', { name: 'Plan a block' }).click();
   let dialog = page.locator('dialog');
   await dialog.getByLabel('Start', { exact: true }).fill('09:00');
   await dialog.getByLabel('End', { exact: true }).fill('10:00');
   await dialog.getByRole('button', { name: 'Add' }).click();
 
-  await page.getByRole('button', { name: 'Add block' }).click();
+  await page.getByRole('button', { name: 'Plan a block' }).click();
   dialog = page.locator('dialog');
   await dialog.getByLabel('Start', { exact: true }).fill('09:30');
   await dialog.getByLabel('End', { exact: true }).fill('10:30');
@@ -133,7 +176,7 @@ test('overlapping blocks are flagged before they are saved', async ({ page }) =>
 
 test('a block that ends before it starts is refused', async ({ page }) => {
   await page.goto('/#/time');
-  await page.getByRole('button', { name: 'Add block' }).click();
+  await page.getByRole('button', { name: 'Plan a block' }).click();
   const dialog = page.locator('dialog');
   await dialog.getByLabel('Start', { exact: true }).fill('14:00');
   await dialog.getByLabel('End', { exact: true }).fill('13:00');

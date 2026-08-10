@@ -21,6 +21,8 @@ import {
   deepClone,
 } from './schema.js';
 import { isValidISODate, isValidTime } from './dates.js';
+import { BLOCK_STATUSES } from './timeblocks.js';
+import { parseActivity, activityThreadId } from './activities.js';
 import { migrate, backfillDefaults } from './migrations.js';
 import { builtinTemplates } from './templates.js';
 
@@ -490,7 +492,16 @@ function validateRest(state, report) {
     fixString(block, 'label', `${path}.label`, report);
     fixString(block, 'notes', `${path}.notes`, report);
     fixDate(block, 'date', `${path}.date`, report);
-    for (const key of ['start', 'end', 'actualStart', 'actualEnd']) {
+    fixEnum(block, 'status', BLOCK_STATUSES, `${path}.status`, report, 'planned');
+    if (block.activity !== null && block.activity !== undefined) {
+      if (typeof block.activity !== 'string' || parseActivity(block.activity).kind === 'none') {
+        report.warn(`${path}.activity`, `"${block.activity}" is not an activity Cairn recognises — the block is kept, unassigned`);
+        block.activity = null;
+      }
+    } else {
+      block.activity = null;
+    }
+    for (const key of ['start', 'end']) {
       if (block[key] && !isValidTime(block[key])) {
         report.warn(`${path}.${key}`, `"${block[key]}" is not a valid HH:MM time — cleared`);
         block[key] = null;
@@ -514,9 +525,10 @@ function crossCheck(state, report) {
     }
   }
   for (const block of state.timeBlocks ?? []) {
-    if (block.threadId && !threadIds.has(block.threadId)) {
+    const owner = activityThreadId(block.activity);
+    if (owner && !threadIds.has(owner)) {
       report.warn(`timeBlocks[${block.id}]`, 'references a thread that is not in this file — the block is kept, unassigned');
-      block.threadId = null;
+      block.activity = null;
       block.taskId = null;
     }
     if (block.taskId && !taskIds.has(block.taskId)) {
