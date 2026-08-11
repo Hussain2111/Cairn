@@ -933,6 +933,99 @@
   padding: var(--sp-2) 0;
 }
 
+/* Tabs inside a view. Underline rather than a box: they are a position in one
+ * page, not five separate destinations. */
+.tabs {
+  display: flex;
+  gap: var(--sp-1);
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--sp-5);
+  overflow-x: auto;
+}
+
+.tab {
+  padding: var(--sp-2) var(--sp-3);
+  color: var(--text-muted);
+  font-size: var(--step-0);
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.tab:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.tab--on {
+  color: var(--text);
+  border-bottom-color: var(--amber-bright);
+  font-weight: 500;
+}
+
+/* Coaching notes, shown at the moment the exercise is logged. */
+.cues {
+  border-left: 2px solid var(--teal-line);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--teal-soft);
+  color: var(--teal);
+  font-size: var(--step--1);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  white-space: pre-wrap;
+}
+
+.exercise-row[data-status="dropped"] {
+  opacity: 0.7;
+}
+
+.exercise-row[data-status="untried"] {
+  border-left: 2px solid var(--amber-line);
+  padding-left: var(--sp-2);
+}
+
+/* A pain location that recurs across several movements is the finding; one
+ * that sticks to a single exercise is a different, smaller problem. */
+.pain-group[data-recurring="true"] {
+  border-left: 2px solid var(--danger);
+}
+
+.pain-group[data-recurring="false"] {
+  border-left: 2px solid var(--amber-line);
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--step--1);
+}
+
+.table th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--line);
+}
+
+.table td {
+  padding: var(--sp-1) var(--sp-2);
+  border-bottom: 1px solid var(--line-faint);
+  vertical-align: top;
+}
+
+.unparsed {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-height: 220px;
+  overflow-y: auto;
+  padding: var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+
 /* --- chess ---------------------------------------------------------------- */
 
 .results {

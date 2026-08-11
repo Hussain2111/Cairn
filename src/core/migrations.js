@@ -7,6 +7,7 @@
 
 import { SCHEMA_VERSION, DEFAULT_SETTINGS, COLLECTIONS, deepClone } from './schema.js';
 import { uid } from './ids.js';
+import { nowStamp } from './dates.js';
 
 /**
  * v1 → v2
@@ -175,10 +176,114 @@ function v3_to_v4(input) {
   return { state, notes };
 }
 
+/**
+ * v4 → v5
+ *   - the generic habit model is gone. The gym was the only thing being tracked
+ *     that way, and everything it needs — sessions, exercises, pain — is now its
+ *     own shape. A gym habit's weekly target becomes the gym target; its date
+ *     log was only ever a mirror of the sessions, so nothing is lost with it.
+ *   - a habit that was *not* the gym is turned into a note rather than deleted.
+ *     Discarding a year of logged days without asking would be the kind of
+ *     silent data loss the import validator exists to prevent, so the dates go
+ *     somewhere they can still be read.
+ *   - exercises gained secondary muscles, equipment, a status with a reason for
+ *     dropping, and cues. `retired: true` becomes `status: 'dropped'` with no
+ *     reason, because the old model never asked for one.
+ *   - sessions gained an end time, skipped exercises, per-exercise notes and a
+ *     routine slot; pain became its own record.
+ */
+function v4_to_v5(input) {
+  const state = deepClone(input);
+  const notes = [];
+
+  for (const key of ['routines', 'painRecords']) {
+    if (!Array.isArray(state[key])) state[key] = [];
+  }
+  if (!Array.isArray(state.notes)) state.notes = [];
+  if (!state.settings || typeof state.settings !== 'object') state.settings = {};
+
+  // --- habits ---------------------------------------------------------------
+  const habits = Array.isArray(state.habits) ? state.habits : [];
+  const gymHabits = habits.filter((h) => h?.kind === 'gym');
+  const others = habits.filter((h) => h?.kind !== 'gym');
+
+  if (gymHabits.length && state.settings.gymWeeklyTarget === undefined) {
+    // If there were somehow several, the largest target is the safe one to
+    // keep: it is the only choice that cannot quietly lower a goal.
+    const target = Math.max(...gymHabits.map((h) => Number(h.weeklyTarget) || 0), 0);
+    if (target > 0) {
+      state.settings.gymWeeklyTarget = Math.round(target);
+      notes.push(`kept your weekly gym target of ${Math.round(target)}`);
+    }
+  }
+
+  for (const habit of others) {
+    const dates = [...new Set((habit.log ?? []).filter((d) => typeof d === 'string'))].sort();
+    state.notes.push({
+      id: uid('note'),
+      title: `Habit archive: ${habit.name || 'Untitled habit'}`,
+      body: [
+        `Cairn no longer tracks habits other than the gym, so this habit was turned into a note rather than deleted.`,
+        '',
+        `Weekly target: ${habit.weeklyTarget ?? '—'}`,
+        `Days logged: ${dates.length}`,
+        '',
+        ...dates.map((d) => `- ${d}`),
+      ].join('\n'),
+      templateId: null,
+      attach: null,
+      createdAt: nowStamp(),
+      updatedAt: nowStamp(),
+    });
+  }
+  if (others.length) {
+    notes.push(`turned ${others.length} non-gym habit(s) into notes so the logged days are still readable`);
+  }
+  delete state.habits;
+
+  // --- the gym's sessions ---------------------------------------------------
+  for (const session of state.gymSessions ?? []) {
+    if (!session || typeof session !== 'object') continue;
+    delete session.habitId;
+    if (session.routineId === undefined) session.routineId = null;
+    if (session.endTime === undefined) session.endTime = null;
+    if (!Array.isArray(session.skipped)) session.skipped = [];
+    for (const entry of session.exercises ?? []) {
+      if (entry.note === undefined) entry.note = '';
+      if (entry.substitutedFor === undefined) entry.substitutedFor = null;
+    }
+  }
+
+  // --- the library ----------------------------------------------------------
+  let dropped = 0;
+  for (const exercise of state.exercises ?? []) {
+    if (!exercise || typeof exercise !== 'object') continue;
+    if (exercise.status === undefined) {
+      exercise.status = exercise.retired ? 'dropped' : 'active';
+      if (exercise.retired) dropped += 1;
+    }
+    delete exercise.retired;
+    if (exercise.dropReason === undefined) exercise.dropReason = null;
+    if (exercise.dropNote === undefined) exercise.dropNote = '';
+    if (!Array.isArray(exercise.secondary)) exercise.secondary = [];
+    // Nothing recorded equipment before this version, and guessing would be
+    // worse than admitting it: the library asks for these to be filled in.
+    if (exercise.equipment === undefined) exercise.equipment = 'unspecified';
+    if (exercise.cues === undefined) exercise.cues = '';
+  }
+  if (dropped) {
+    notes.push(`marked ${dropped} retired exercise(s) as dropped — open the library to say why`);
+  }
+
+  state.schemaVersion = 5;
+  return { state, notes };
+}
+
 export const MIGRATIONS = {
   1: v1_to_v2,
   2: v2_to_v3,
   3: v3_to_v4,
+  4: v4_to_v5,
 };
 
 export const OLDEST_SUPPORTED_VERSION = 1;

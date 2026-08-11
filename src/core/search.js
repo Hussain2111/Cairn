@@ -1,5 +1,5 @@
 // Search across tasks, stages, steps, threads, notes, questions, applications,
-// outreach, reading and habits.
+// outreach, reading and the gym.
 
 import { walkTasks } from './threads.js';
 
@@ -188,15 +188,49 @@ export function search(state, query, { limit = 80 } = {}) {
     });
   }
 
-  for (const habit of state?.habits ?? []) {
+  for (const exercise of state?.exercises ?? []) {
     push({
-      type: 'habit',
-      id: habit.id,
-      title: habit.name,
-      context: `${habit.weeklyTarget}×/week`,
-      snippet: '',
-      route: '#/habits',
-      score: score(habit.name, needle),
+      type: 'exercise',
+      id: exercise.id,
+      title: exercise.name,
+      context: [exercise.muscle, exercise.equipment].filter(Boolean).join(' · '),
+      snippet: snippet(exercise.cues, needle),
+      route: '#/gym/library',
+      score: Math.max(
+        boost(score(exercise.name, needle), 5),
+        // Cues are coaching notes worth finding by what they say, not only by
+        // which exercise they belong to.
+        score(exercise.cues, needle),
+        score(exercise.dropNote, needle),
+      ),
+    });
+  }
+
+  for (const record of state?.painRecords ?? []) {
+    push({
+      type: 'pain',
+      id: record.id,
+      title: record.location || 'pain',
+      context: record.date,
+      snippet: snippet(record.note, needle),
+      route: '#/gym/pain',
+      score: Math.max(boost(score(record.location, needle), 4), score(record.note, needle)),
+    });
+  }
+
+  for (const session of state?.gymSessions ?? []) {
+    const notes = [session.notes, ...(session.exercises ?? []).map((e) => e.note)].filter(Boolean).join(' ');
+    if (!notes) continue;
+    push({
+      type: 'session',
+      id: session.id,
+      title: `Gym — ${session.date}`,
+      context: `${(session.exercises ?? []).length} exercises`,
+      snippet: snippet(notes, needle),
+      route: '#/gym/history',
+      // The per-exercise notes are the useful part: "no tension in the target
+      // muscle" is the kind of thing worth finding again.
+      score: score(notes, needle),
     });
   }
 

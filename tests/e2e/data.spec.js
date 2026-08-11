@@ -53,7 +53,23 @@ async function seed(page) {
         dueDate: '2026-09-01', retired: false, retiredAt: null, createdAt: '2026-06-01',
         attempts: [{ id: 'att1', date: '2026-08-01', unaided: true, minutes: 14, hesitation: 'frame clause' }],
       });
-      state.habits.push({ id: 'hab_seed', name: 'Gym', weeklyTarget: 3, log: ['2026-08-03', '2026-08-05'], archived: false, createdAt: '2026-06-01' });
+      state.exercises.push({
+        id: 'ex_seed', name: 'Bench press', muscle: 'chest', secondary: ['arms'], equipment: 'barbell',
+        status: 'active', dropReason: null, dropNote: '', cues: 'brace, elbows at 45', createdAt: '2026-06-01',
+      });
+      state.gymSessions.push({
+        id: 'gym_seed', routineId: null, date: '2026-08-05', startTime: '18:00', endTime: '19:00',
+        durationMinutes: null, warmup: true, warmupMinutes: 10, notes: '', createdAt: '2026-08-05T19:00:00',
+        skipped: [],
+        exercises: [{
+          id: 'sx1', exerciseId: 'ex_seed', substitutedFor: null, note: 'no tension in the target muscle',
+          sets: [{ id: 'set1', reps: 10, weight: 60 }],
+        }],
+      });
+      state.painRecords.push({
+        id: 'pain_seed', date: '2026-08-05', location: 'right shoulder', exerciseId: 'ex_seed',
+        when: 'during', note: 'third set only', sessionId: 'gym_seed', createdAt: '2026-08-05T19:00:00',
+      });
       state.applications.push({
         id: 'app_seed', company: 'Acme', role: 'Backend engineer', source: 'LinkedIn', url: '', dateApplied: '2026-08-04',
         resumeVersion: 'backend-v3', referral: '', status: 'applied', nextAction: 'follow up', nextActionDate: '2026-08-20',
@@ -74,7 +90,9 @@ test('export then import round-trips state exactly', async ({ page }) => {
     window.cairn.store.mutate('wipe', (state) => {
       state.threads.length = 0;
       state.questions.length = 0;
-      state.habits.length = 0;
+      state.exercises.length = 0;
+      state.gymSessions.length = 0;
+      state.painRecords.length = 0;
       state.applications.length = 0;
     });
     window.cairn.render();
@@ -90,7 +108,8 @@ test('export then import round-trips state exactly', async ({ page }) => {
       errors: report.errors,
       threads: JSON.stringify(window.cairn.store.state.threads),
       questions: JSON.stringify(window.cairn.store.state.questions),
-      habits: JSON.stringify(window.cairn.store.state.habits),
+      gym: JSON.stringify(window.cairn.store.state.gymSessions),
+      pain: JSON.stringify(window.cairn.store.state.painRecords),
       applications: JSON.stringify(window.cairn.store.state.applications),
     };
   }, exported);
@@ -104,7 +123,11 @@ test('export then import round-trips state exactly', async ({ page }) => {
   expect(questions[0].intervalIndex).toBe(2);
   expect(questions[0].dueDate).toBe('2026-09-01');
   expect(questions[0].attempts[0].hesitation).toBe('frame clause');
-  expect(JSON.parse(result.habits)[0].log).toEqual(['2026-08-03', '2026-08-05']);
+  // The gym survives with the part that is hard to reconstruct: the note.
+  const gym = JSON.parse(result.gym);
+  expect(gym[0].exercises[0].sets).toEqual([{ id: 'set1', reps: 10, weight: 60 }]);
+  expect(gym[0].exercises[0].note).toBe('no tension in the target muscle');
+  expect(JSON.parse(result.pain)[0].location).toBe('right shoulder');
   expect(JSON.parse(result.applications)[0].resumeVersion).toBe('backend-v3');
 
   // And the UI reflects it.
@@ -152,20 +175,21 @@ test('an older-schema file migrates on import and reports what changed', async (
       questions: window.cairn.store.state.questions.map((q) => [q.id, q.bank]),
       stageForced: window.cairn.store.state.threads[0].stages[0].forceCompleted,
       version: window.cairn.store.state.schemaVersion,
-      habitKinds: window.cairn.store.state.habits.map((h) => h.kind),
-      collections: ['exercises', 'gymSessions', 'chessGames'].filter(
+      collections: ['exercises', 'routines', 'gymSessions', 'painRecords', 'chessGames'].filter(
         (key) => Array.isArray(window.cairn.store.state[key]),
       ),
+      habitsGone: window.cairn.store.state.habits === undefined,
     };
   }, v1);
 
   expect(report.ok).toBe(true);
   // A v1 file runs the whole chain, not just the first step.
-  expect(report.version).toBe(3);
+  expect(report.version).toBe(5);
   expect(report.questions).toEqual([['q1', 'sql']]);
   expect(report.stageForced).toBe(true);
   expect(report.notes.join(' ')).toContain('migrated from schema v1');
-  expect(report.collections).toEqual(['exercises', 'gymSessions', 'chessGames']);
+  expect(report.collections).toEqual(['exercises', 'routines', 'gymSessions', 'painRecords', 'chessGames']);
+  expect(report.habitsGone).toBe(true);
 });
 
 test('a repairable file loads with every repair reported and nothing dropped', async ({ page }) => {
@@ -182,7 +206,7 @@ test('a repairable file loads with every repair reported and nothing dropped', a
         }],
       }],
     }],
-    habits: [{ id: 'h1', name: 'Gym', weeklyTarget: 3, log: ['2026-08-03', 'yesterday'] }],
+    painRecords: [{ id: 'p1', date: '2026-08-05', location: '   ', exerciseId: 'nope', when: 'sideways' }],
   });
 
   const report = await page.evaluate((json) => {
@@ -195,7 +219,7 @@ test('a repairable file loads with every repair reported and nothing dropped', a
       taskCount: state.threads[0].stages[0].steps[0].tasks.length,
       type: state.threads[0].type,
       title: state.threads[0].stages[0].steps[0].tasks[1].title,
-      habitLog: state.habits[0].log,
+      painLocation: state.painRecords[0].location,
     };
   }, messy);
 
@@ -203,7 +227,7 @@ test('a repairable file loads with every repair reported and nothing dropped', a
   expect(report.taskCount).toBe(2, 'both tasks survive their bad fields');
   expect(report.type).toBe('project');
   expect(report.title).toBe('12345');
-  expect(report.habitLog).toEqual(['2026-08-03']);
+  expect(report.painLocation).toBe('unspecified', 'a pain record with no location is filed, not dropped');
   expect(report.warnings.join(' | ')).toContain('not a valid YYYY-MM-DD date');
 });
 

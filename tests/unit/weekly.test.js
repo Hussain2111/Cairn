@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { generateWeeklyReview, weeklyReviewMarkdown } from '../../src/core/weekly.js';
 import { weeklyDistribution, blockMinutes, plannedMinutes, loggedMinutes, overlaps, dayTotals } from '../../src/core/timeblocks.js';
 import { search } from '../../src/core/search.js';
-import { createEmptyState, makeThread, makeStage, makeStep, makeTask, makeQuestion, makeApplication, makeHabit, makeTimeBlock } from '../../src/core/schema.js';
+import { createEmptyState, makeThread, makeStage, makeStep, makeTask, makeQuestion, makeApplication, makeTimeBlock, makeExercise, makeGymSession, makeSessionExercise, makeSet } from '../../src/core/schema.js';
 
 const TODAY = '2026-08-07'; // Friday; the week runs Sun 02 -> Sat 08
 
@@ -51,9 +51,6 @@ function fixture() {
     makeApplication({ company: 'Old Co', role: 'Engineer', dateApplied: '2026-06-01' }),
   );
 
-  const habit = makeHabit({ name: 'Gym', weeklyTarget: 3 });
-  habit.log = ['2026-08-03', '2026-08-05', '2026-08-06'];
-  state.habits.push(habit);
 
   // A plan and what actually happened are separate blocks now.
   const on = (id) => `thread:${id}`;
@@ -144,10 +141,23 @@ test('the review flags stalled threads', () => {
   assert.deepEqual(report.stalled.map((t) => t.thread.name), ['GRE prep']);
 });
 
-test('habit progress for the week is included', () => {
-  const report = generateWeeklyReview(fixture(), { today: TODAY });
-  assert.equal(report.habits[0].count, 3);
-  assert.equal(report.habits[0].met, true);
+test('gym progress for the week is included, with the groups it missed', () => {
+  const state = fixture();
+  const bench = makeExercise({ name: 'Bench press', muscle: 'chest' });
+  state.exercises.push(bench);
+  state.settings.gymWeeklyTarget = 2;
+  for (const date of ['2026-08-03', '2026-08-05']) {
+    const session = makeGymSession({ date });
+    session.exercises = [makeSessionExercise({ exerciseId: bench.id, sets: [makeSet({ reps: 10, weight: 60 })] })];
+    state.gymSessions.push(session);
+  }
+
+  const report = generateWeeklyReview(state, { today: TODAY });
+  assert.equal(report.gym.done, 2);
+  assert.equal(report.gym.target, 2);
+  assert.equal(report.gym.met, true);
+  assert.equal(report.gym.untrained.includes('chest'), false);
+  assert.equal(report.gym.untrained.includes('legs'), true, 'the gaps are the useful half');
 });
 
 test('the markdown export carries the substance of the report', () => {
@@ -157,7 +167,7 @@ test('the markdown export carries the substance of the report', () => {
   assert.match(md, /\*\*Did not move\.\*\*/);
   assert.match(md, /frame clause syntax/, 'hesitations are what make the review worth reading');
   assert.match(md, /Backend engineer at Acme/);
-  assert.match(md, /Gym: 3\/3/);
+  assert.match(md, /Sessions: 0\/4/);
   assert.match(md, /## Time/);
   assert.doesNotMatch(md, /undefined/);
   assert.doesNotMatch(md, /\[object Object\]/);

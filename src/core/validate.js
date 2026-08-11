@@ -15,7 +15,11 @@ import {
   READING_STATUSES,
   READING_SOURCES,
   MUSCLE_GROUPS,
-  HABIT_KINDS,
+  EQUIPMENT_TYPES,
+  EXERCISE_STATUSES,
+  DROP_REASONS,
+  SKIP_REASONS,
+  PAIN_TIMING,
   CHESS_COLOURS,
   CHESS_RESULTS,
   deepClone,
@@ -339,26 +343,6 @@ function validateRest(state, report) {
     return true;
   });
 
-  state.habits = state.habits.filter((habit, i) => {
-    const path = `habits[${i}]`;
-    if (!isObject(habit)) {
-      report.error(path, 'habit is not an object');
-      return true;
-    }
-    if (!habit.id) habit.id = `hab_recovered_${i}`;
-    fixString(habit, 'name', `${path}.name`, report, { fallback: 'Untitled habit' });
-    fixEnum(habit, 'kind', HABIT_KINDS, `${path}.kind`, report, 'simple');
-    const target = Number(habit.weeklyTarget);
-    habit.weeklyTarget = Number.isFinite(target) && target > 0 ? Math.round(target) : 1;
-    fixArray(habit, 'log', `${path}.log`, report);
-    const before = habit.log.length;
-    habit.log = [...new Set(habit.log.filter((d) => isValidISODate(d)))].sort();
-    if (habit.log.length !== before) {
-      report.warn(`${path}.log`, `${before - habit.log.length} invalid or duplicate log date(s) removed`);
-    }
-    return true;
-  });
-
   state.exercises = state.exercises.filter((exercise, i) => {
     const path = `exercises[${i}]`;
     if (!isObject(exercise)) {
@@ -368,8 +352,58 @@ function validateRest(state, report) {
     if (!exercise.id) exercise.id = `ex_recovered_${i}`;
     fixString(exercise, 'name', `${path}.name`, report, { fallback: 'Untitled exercise' });
     if (!exercise.name.trim()) exercise.name = 'Untitled exercise';
+    fixString(exercise, 'cues', `${path}.cues`, report);
+    fixString(exercise, 'dropNote', `${path}.dropNote`, report);
     fixEnum(exercise, 'muscle', MUSCLE_GROUPS, `${path}.muscle`, report, 'core');
-    exercise.retired = !!exercise.retired;
+    fixEnum(exercise, 'equipment', EQUIPMENT_TYPES, `${path}.equipment`, report, 'unspecified');
+    fixEnum(exercise, 'status', EXERCISE_STATUSES, `${path}.status`, report, 'active');
+    fixArray(exercise, 'secondary', `${path}.secondary`, report);
+    exercise.secondary = [...new Set(exercise.secondary
+      .filter((m) => MUSCLE_GROUPS.includes(m))
+      .filter((m) => m !== exercise.muscle))];
+    if (exercise.status === 'dropped') {
+      if (exercise.dropReason !== null && !DROP_REASONS.includes(exercise.dropReason)) {
+        report.warn(`${path}.dropReason`, `"${exercise.dropReason}" is not one of ${DROP_REASONS.join(', ')} — cleared, so the library will ask again`);
+        exercise.dropReason = null;
+      }
+    } else if (exercise.dropReason) {
+      report.warn(path, 'carried a reason for being dropped but is not dropped — the reason was cleared');
+      exercise.dropReason = null;
+    }
+    return true;
+  });
+
+  state.routines = state.routines.filter((routine, i) => {
+    const path = `routines[${i}]`;
+    if (!isObject(routine)) {
+      report.error(path, 'routine is not an object');
+      return true;
+    }
+    if (!routine.id) routine.id = `rot_recovered_${i}`;
+    fixString(routine, 'name', `${path}.name`, report, { fallback: `Slot ${i + 1}` });
+    routine.order = Number.isFinite(Number(routine.order)) ? Number(routine.order) : i;
+    fixArray(routine, 'exerciseIds', `${path}.exerciseIds`, report);
+    routine.exerciseIds = routine.exerciseIds.filter((id) => typeof id === 'string');
+    return true;
+  });
+
+  state.painRecords = state.painRecords.filter((record, i) => {
+    const path = `painRecords[${i}]`;
+    if (!isObject(record)) {
+      report.error(path, 'pain record is not an object');
+      return true;
+    }
+    if (!record.id) record.id = `pain_recovered_${i}`;
+    fixString(record, 'location', `${path}.location`, report);
+    fixString(record, 'note', `${path}.note`, report);
+    fixDate(record, 'date', `${path}.date`, report);
+    fixEnum(record, 'when', PAIN_TIMING, `${path}.when`, report, 'during');
+    if (!record.location.trim()) {
+      // Location is the axis the whole view groups on. Without it the record
+      // cannot answer the one question it exists for.
+      report.warn(path, 'pain was recorded without saying where — it is kept, filed under "unspecified"');
+      record.location = 'unspecified';
+    }
     return true;
   });
 
@@ -390,8 +424,24 @@ function validateRest(state, report) {
       session.startTime = null;
     }
     session.durationMinutes = positiveOrNull(session.durationMinutes, `${path}.durationMinutes`, report);
+    if (session.endTime && !isValidTime(session.endTime)) {
+      report.warn(`${path}.endTime`, `"${session.endTime}" is not a valid HH:MM time — cleared`);
+      session.endTime = null;
+    }
     session.warmup = !!session.warmup;
     session.warmupMinutes = positiveOrNull(session.warmupMinutes, `${path}.warmupMinutes`, report);
+    fixArray(session, 'skipped', `${path}.skipped`, report);
+    session.skipped = session.skipped.filter((entry, si) => {
+      const sPath = `${path}.skipped[${si}]`;
+      if (!isObject(entry)) {
+        report.error(sPath, 'skipped exercise is not an object');
+        return true;
+      }
+      if (!entry.id) entry.id = `skip_recovered_${i}_${si}`;
+      fixString(entry, 'note', `${sPath}.note`, report);
+      fixEnum(entry, 'reason', SKIP_REASONS, `${sPath}.reason`, report, 'other');
+      return true;
+    });
     fixArray(session, 'exercises', `${path}.exercises`, report);
     session.exercises = session.exercises.filter((entry, ei) => {
       const ePath = `${path}.exercises[${ei}]`;
@@ -400,6 +450,8 @@ function validateRest(state, report) {
         return true;
       }
       if (!entry.id) entry.id = `sx_recovered_${i}_${ei}`;
+      fixString(entry, 'note', `${ePath}.note`, report);
+      if (entry.substitutedFor === undefined) entry.substitutedFor = null;
       fixArray(entry, 'sets', `${ePath}.sets`, report);
       entry.sets = entry.sets.filter((set, si) => {
         const sPath = `${ePath}.sets[${si}]`;
@@ -543,20 +595,13 @@ function crossCheck(state, report) {
     }
   }
 
-  // A session whose habit is missing would be invisible and uncountable, so it
-  // is re-homed onto a gym habit rather than left orphaned.
-  const gymHabits = (state.habits ?? []).filter((h) => h.kind === 'gym');
-  const habitIds = new Set((state.habits ?? []).map((h) => h.id));
   const exerciseIds = new Set((state.exercises ?? []).map((e) => e.id));
+  const routineIds = new Set((state.routines ?? []).map((r) => r.id));
 
   for (const session of state.gymSessions ?? []) {
-    if (!session.habitId || !habitIds.has(session.habitId)) {
-      if (gymHabits.length === 1) {
-        report.warn(`gymSessions[${session.id}]`, `belongs to a habit that is not in this file — moved to "${gymHabits[0].name}"`);
-        session.habitId = gymHabits[0].id;
-      } else {
-        report.warn(`gymSessions[${session.id}]`, 'belongs to a habit that is not in this file — the session is kept but will not appear under any habit');
-      }
+    if (session.routineId && !routineIds.has(session.routineId)) {
+      report.warn(`gymSessions[${session.id}]`, 'names a routine slot that is not in this file — the session is kept, unassigned');
+      session.routineId = null;
     }
     for (const entry of session.exercises ?? []) {
       if (entry.exerciseId && !exerciseIds.has(entry.exerciseId)) {
@@ -570,20 +615,10 @@ function crossCheck(state, report) {
     }
   }
 
-  // The date log of a gym habit is a mirror of its session dates. An import
-  // that disagrees is corrected here rather than showing two different answers
-  // for "how many times this week".
-  for (const habit of gymHabits) {
-    const fromSessions = [...new Set(
-      (state.gymSessions ?? []).filter((s) => s.habitId === habit.id && s.date).map((s) => s.date),
-    )].sort();
-    const current = [...new Set(habit.log ?? [])].sort();
-    if (fromSessions.join('|') !== current.join('|')) {
-      report.warn(
-        `habits[${habit.id}].log`,
-        `the logged days did not match the ${fromSessions.length} recorded session(s) — rebuilt from the sessions`,
-      );
-      habit.log = fromSessions;
+  for (const record of state.painRecords ?? []) {
+    if (record.exerciseId && !exerciseIds.has(record.exerciseId)) {
+      report.warn(`painRecords[${record.id}]`, 'names an exercise that is not in this file — the record is kept without it');
+      record.exerciseId = null;
     }
   }
 }
@@ -700,9 +735,10 @@ export function summarise(state) {
     questions: (state.questions ?? []).length,
     applications: (state.applications ?? []).length,
     outreach: (state.outreach ?? []).length,
-    habits: (state.habits ?? []).length,
     exercises: (state.exercises ?? []).length,
+    routines: (state.routines ?? []).length,
     gymSessions: (state.gymSessions ?? []).length,
+    painRecords: (state.painRecords ?? []).length,
     chessGames: (state.chessGames ?? []).length,
     reading: (state.reading ?? []).length,
     timeBlocks: (state.timeBlocks ?? []).length,

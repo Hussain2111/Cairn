@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 // The remaining surfaces: notes and templates, pipelines, time blocking, the
-// weekly review, habits, search, stall detection and the narrow-screen layout.
+// weekly review, search, stall detection and the narrow-screen layout.
 
 function iso(offsetDays = 0) {
   const d = new Date();
@@ -182,24 +182,6 @@ test('a block that ends before it starts is refused', async ({ page }) => {
   await dialog.getByLabel('End', { exact: true }).fill('13:00');
   await dialog.getByRole('button', { name: 'Add' }).click();
   await expect(page.getByText('A block has to end after it starts.')).toBeVisible();
-});
-
-test('habits log against a weekly target and build a history', async ({ page }) => {
-  await page.goto('/#/habits');
-  await page.getByRole('button', { name: 'New habit' }).click();
-  const dialog = page.locator('dialog');
-  await dialog.getByLabel('Name').fill('Gym');
-  await dialog.getByLabel('Times per week').fill('2');
-  await dialog.getByRole('button', { name: 'Add' }).click();
-
-  await expect(page.locator('.card')).toContainText('0/2 this week');
-
-  // Log today from the week strip.
-  await page.locator('.week-day--today').click();
-  await expect(page.locator('.card').first()).toContainText('1/2 this week');
-
-  await page.goto('/#/today');
-  await expect(page.locator('.section', { hasText: 'Habits' })).toContainText('1/2 this week');
 });
 
 test('a stalled thread is surfaced on Today and in its own filter', async ({ page }) => {
