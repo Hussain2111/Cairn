@@ -15,7 +15,7 @@ test('every view renders without a console error', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Today', level: 1 })).toBeVisible();
 
-  for (const route of ['#/threads', '#/questions', '#/notes', '#/pipelines', '#/time', '#/weekly', '#/gym', '#/gym/library', '#/gym/pain', '#/gym/history', '#/chess', '#/chess/lessons', '#/reading', '#/search', '#/settings']) {
+  for (const route of ['#/threads', '#/questions', '#/notes', '#/pipelines', '#/time', '#/weekly', '#/gym', '#/gym/library', '#/gym/pain', '#/gym/history', '#/chess', '#/chess/lessons', '#/gre', '#/gre/log', '#/gre/retrieval', '#/gre/audit', '#/gre/schedule', '#/reading', '#/search', '#/settings']) {
     await page.goto(`/${route}`);
     await expect(page.locator('h1.page-title')).toBeVisible();
   }

@@ -20,6 +20,7 @@ import {
   DROP_REASONS,
   SKIP_REASONS,
   PAIN_TIMING,
+  GRE_CAUSES,
   CHESS_COLOURS,
   CHESS_RESULTS,
   deepClone,
@@ -469,6 +470,107 @@ function validateRest(state, report) {
     return true;
   });
 
+  state.greBlocks = state.greBlocks.filter((block, i) => {
+    const path = `greBlocks[${i}]`;
+    if (!isObject(block)) {
+      report.error(path, 'GRE block is not an object');
+      return true;
+    }
+    if (!block.id) block.id = `grb_recovered_${i}`;
+    fixString(block, 'code', `${path}.code`, report, { fallback: `B${i + 1}` });
+    fixString(block, 'name', `${path}.name`, report, { fallback: 'Untitled block' });
+    fixString(block, 'description', `${path}.description`, report);
+    block.minutes = positiveOrNull(block.minutes, `${path}.minutes`, report) ?? 0;
+    block.order = Number.isFinite(Number(block.order)) ? Number(block.order) : i;
+    block.pinFirst = !!block.pinFirst;
+    block.everyDay = !!block.everyDay;
+    block.hasTopic = !!block.hasTopic;
+    block.notBeforeDay = positiveOrNull(block.notBeforeDay, `${path}.notBeforeDay`, report);
+    return true;
+  });
+
+  state.grePhases = state.grePhases.filter((phase, i) => {
+    const path = `grePhases[${i}]`;
+    if (!isObject(phase)) {
+      report.error(path, 'GRE phase is not an object');
+      return true;
+    }
+    if (!phase.id) phase.id = `grp_recovered_${i}`;
+    fixString(phase, 'name', `${path}.name`, report, { fallback: `Phase ${i + 1}` });
+    phase.order = Number.isFinite(Number(phase.order)) ? Number(phase.order) : i;
+    phase.gateModule = positiveOrNull(phase.gateModule, `${path}.gateModule`, report);
+    phase.gateByDay = positiveOrNull(phase.gateByDay, `${path}.gateByDay`, report);
+    if ((phase.gateModule === null) !== (phase.gateByDay === null)) {
+      // Half a gate cannot be met or missed, so it is reported rather than
+      // left to render as a silent pass.
+      report.warn(path, 'has half a gate — a module number without a day, or the reverse. It will not be checked.');
+    }
+    return true;
+  });
+
+  state.greDays = state.greDays.filter((day, i) => {
+    const path = `greDays[${i}]`;
+    if (!isObject(day)) {
+      report.error(path, 'GRE day is not an object');
+      return true;
+    }
+    if (!day.id) day.id = `grd_recovered_${i}`;
+    fixString(day, 'checkpoint', `${path}.checkpoint`, report);
+    fixString(day, 'notes', `${path}.notes`, report);
+    fixDate(day, 'date', `${path}.date`, report);
+    day.dayNumber = Number.isFinite(Number(day.dayNumber)) ? Number(day.dayNumber) : i + 1;
+    day.moduleReached = positiveOrNull(day.moduleReached, `${path}.moduleReached`, report);
+    fixArray(day, 'blockCodes', `${path}.blockCodes`, report);
+    day.blockCodes = day.blockCodes.filter((code) => typeof code === 'string');
+    fixArray(day, 'completed', `${path}.completed`, report);
+    day.completed = day.completed.filter((code) => typeof code === 'string');
+    if (!isObject(day.topics)) day.topics = {};
+    return true;
+  });
+
+  state.greEntries = state.greEntries.filter((entry, i) => {
+    const path = `greEntries[${i}]`;
+    if (!isObject(entry)) {
+      report.error(path, 'GRE log entry is not an object');
+      return true;
+    }
+    if (!entry.id) entry.id = `gre_recovered_${i}`;
+    for (const key of ['source', 'gave', 'did', 'broke', 'portable']) {
+      fixString(entry, key, `${path}.${key}`, report);
+    }
+    fixDate(entry, 'date', `${path}.date`, report);
+    fixDate(entry, 'dueDate', `${path}.dueDate`, report);
+    fixDate(entry, 'retiredAt', `${path}.retiredAt`, report);
+    fixEnum(entry, 'cause', GRE_CAUSES, `${path}.cause`, report, 'concept');
+    entry.correct = !!entry.correct;
+    entry.retired = !!entry.retired;
+    entry.dayNumber = positiveOrNull(entry.dayNumber, `${path}.dayNumber`, report);
+    if (!Number.isInteger(entry.intervalIndex) || entry.intervalIndex < 0) {
+      report.warn(`${path}.intervalIndex`, 'not a valid position in the retrieval chain — reset to the start');
+      entry.intervalIndex = 0;
+    }
+    fixArray(entry, 'attempts', `${path}.attempts`, report);
+    entry.attempts = entry.attempts.filter((attempt, ai) => {
+      const aPath = `${path}.attempts[${ai}]`;
+      if (!isObject(attempt)) {
+        report.error(aPath, 'attempt is not an object');
+        return true;
+      }
+      if (!attempt.id) attempt.id = `gra_recovered_${i}_${ai}`;
+      fixString(attempt, 'note', `${aPath}.note`, report);
+      fixDate(attempt, 'date', `${aPath}.date`, report);
+      attempt.correct = !!attempt.correct;
+      attempt.minutes = positiveOrNull(attempt.minutes, `${aPath}.minutes`, report);
+      return true;
+    });
+    if (!entry.portable.trim()) {
+      // The editor will not save one without it. A file that has one anyway is
+      // kept — refusing would lose the problem — but it is said out loud.
+      report.warn(path, 'has no portable move — it is kept, but the extraction it exists to record did not happen');
+    }
+    return true;
+  });
+
   state.chessGames = state.chessGames.filter((game, i) => {
     const path = `chessGames[${i}]`;
     if (!isObject(game)) {
@@ -615,6 +717,18 @@ function crossCheck(state, report) {
     }
   }
 
+  const entryIds = new Set((state.greEntries ?? []).map((e) => e.id));
+  for (const entry of state.greEntries ?? []) {
+    if (entry.appliedFrom && !entryIds.has(entry.appliedFrom)) {
+      report.warn(`greEntries[${entry.id}]`, 'links to an earlier entry that is not in this file — the link is cleared, so it will not be counted as a portable-move hit');
+      entry.appliedFrom = null;
+    }
+    if (entry.appliedFrom === entry.id) {
+      report.warn(`greEntries[${entry.id}]`, 'links to itself — cleared');
+      entry.appliedFrom = null;
+    }
+  }
+
   for (const record of state.painRecords ?? []) {
     if (record.exerciseId && !exerciseIds.has(record.exerciseId)) {
       report.warn(`painRecords[${record.id}]`, 'names an exercise that is not in this file — the record is kept without it');
@@ -739,6 +853,8 @@ export function summarise(state) {
     routines: (state.routines ?? []).length,
     gymSessions: (state.gymSessions ?? []).length,
     painRecords: (state.painRecords ?? []).length,
+    greDays: (state.greDays ?? []).length,
+    greEntries: (state.greEntries ?? []).length,
     chessGames: (state.chessGames ?? []).length,
     reading: (state.reading ?? []).length,
     timeBlocks: (state.timeBlocks ?? []).length,

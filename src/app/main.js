@@ -7,6 +7,7 @@ import { todayISO } from '../core/dates.js';
 import { reviewQueue } from '../core/srs.js';
 import { needsAction } from '../core/pipelines.js';
 import { stalledThreads } from '../core/threads.js';
+import { retrievalQueue } from '../core/gre.js';
 import { renderImportReport } from './views/settings.js';
 
 import * as todayView from './views/today.js';
@@ -18,6 +19,7 @@ import * as pipelinesView from './views/pipelines.js';
 import * as timeView from './views/time.js';
 import * as weeklyView from './views/weekly.js';
 import * as gymView from './views/gym.js';
+import * as greView from './views/gre.js';
 import * as readingView from './views/reading.js';
 import * as chessView from './views/chess.js';
 import * as searchView from './views/search.js';
@@ -36,6 +38,7 @@ const VIEWS = {
   time: timeView,
   weekly: weeklyView,
   gym: gymView,
+  gre: greView,
   chess: chessView,
   reading: readingView,
   search: searchView,
@@ -125,6 +128,7 @@ function renderSidebar() {
   const actions = needsAction(state, { today }).count;
   const stalled = stalledThreads(state, { today }).length;
   const activeThreads = state.threads.filter((t) => !t.archived).length;
+  const greDue = retrievalQueue(state, { today }).length;
 
   clear(sidebarNode);
   sidebarNode.appendChild(
@@ -143,6 +147,7 @@ function renderSidebar() {
         navLink('#/time', 'Time'),
         navLink('#/weekly', 'Weekly review'),
         el('div.nav__section', { text: 'Keep going' }),
+        navLink('#/gre', 'GRE', greDue || null),
         navLink('#/gym', 'Gym', null, true),
         navLink('#/chess', 'Chess', state.chessGames.length || null, true),
         navLink('#/reading', 'Reading', state.reading.length || null, true),

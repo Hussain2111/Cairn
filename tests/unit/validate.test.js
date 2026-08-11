@@ -40,6 +40,8 @@ test('a well-formed export round-trips exactly', () => {
     routines: 0,
     gymSessions: 0,
     painRecords: 0,
+    greDays: 0,
+    greEntries: 0,
     chessGames: 0,
     reading: 0,
     timeBlocks: 0,

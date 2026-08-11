@@ -175,7 +175,7 @@ test('an older-schema file migrates on import and reports what changed', async (
       questions: window.cairn.store.state.questions.map((q) => [q.id, q.bank]),
       stageForced: window.cairn.store.state.threads[0].stages[0].forceCompleted,
       version: window.cairn.store.state.schemaVersion,
-      collections: ['exercises', 'routines', 'gymSessions', 'painRecords', 'chessGames'].filter(
+      collections: ['exercises', 'routines', 'gymSessions', 'painRecords', 'greDays', 'greEntries', 'chessGames'].filter(
         (key) => Array.isArray(window.cairn.store.state[key]),
       ),
       habitsGone: window.cairn.store.state.habits === undefined,
@@ -184,11 +184,11 @@ test('an older-schema file migrates on import and reports what changed', async (
 
   expect(report.ok).toBe(true);
   // A v1 file runs the whole chain, not just the first step.
-  expect(report.version).toBe(5);
+  expect(report.version).toBe(6);
   expect(report.questions).toEqual([['q1', 'sql']]);
   expect(report.stageForced).toBe(true);
   expect(report.notes.join(' ')).toContain('migrated from schema v1');
-  expect(report.collections).toEqual(['exercises', 'routines', 'gymSessions', 'painRecords', 'chessGames']);
+  expect(report.collections).toEqual(['exercises', 'routines', 'gymSessions', 'painRecords', 'greDays', 'greEntries', 'chessGames']);
   expect(report.habitsGone).toBe(true);
 });
 

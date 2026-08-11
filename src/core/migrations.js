@@ -279,11 +279,33 @@ function v4_to_v5(input) {
   return { state, notes };
 }
 
+/**
+ * v5 → v6
+ *   - the GRE became its own view rather than a thread, because it is a fixed
+ *     daily programme with an end date, not a tree of stages. Four collections
+ *     arrive empty: the plan is seeded from a paste, never from the source.
+ */
+function v5_to_v6(input) {
+  const state = deepClone(input);
+  const notes = [];
+  for (const key of ['greBlocks', 'grePhases', 'greDays', 'greEntries']) {
+    if (!Array.isArray(state[key])) state[key] = [];
+  }
+  if (!state.settings || typeof state.settings !== 'object') state.settings = {};
+  if (!Array.isArray(state.settings.greIntervals)) {
+    state.settings.greIntervals = [3, 10];
+    notes.push('added the GRE retrieval spacing: a cold re-attempt at +3 days, then +10');
+  }
+  state.schemaVersion = 6;
+  return { state, notes };
+}
+
 export const MIGRATIONS = {
   1: v1_to_v2,
   2: v2_to_v3,
   3: v3_to_v4,
   4: v4_to_v5,
+  5: v5_to_v6,
 };
 
 export const OLDEST_SUPPORTED_VERSION = 1;

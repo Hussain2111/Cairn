@@ -7,7 +7,7 @@
 import { uid } from './ids.js';
 import { todayISO, nowStamp } from './dates.js';
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 export const STORAGE_KEY = 'cairn.state';
 export const APP_VERSION = '1.0.0';
 
@@ -72,6 +72,33 @@ export const SKIP_REASONS = ['occupied', 'time', 'pain', 'chose not to', 'other'
 /** Whether pain showed up in the movement or afterwards. */
 export const PAIN_TIMING = ['during', 'after'];
 
+// --- GRE --------------------------------------------------------------------
+
+/** Why a problem was missed. Four causes, because they need four responses. */
+export const GRE_CAUSES = ['concept', 'format', 'timing', 'careless'];
+
+/**
+ * The blocks a day can be made of.
+ *
+ * This is a *template*, offered when the schedule is first seeded. It is not
+ * the plan: the plan lives in the data, because it has an end date and will be
+ * rewritten, and a plan compiled into the source cannot be.
+ */
+export const DEFAULT_GRE_BLOCKS = [
+  { code: 'A', name: 'Retrieval', minutes: 25, order: 0, pinFirst: true, notBeforeDay: 4,
+    description: 'Cold re-attempts of problems missed three or more days ago. Nothing to retrieve before day four.' },
+  { code: 'B', name: 'Concept', minutes: 70, order: 1,
+    description: 'Advance the study plan\'s modules.' },
+  { code: 'C', name: 'Deliberate problems', minutes: 65, order: 2, hasTopic: true,
+    description: 'One narrow slice: one question type, one topic, one difficulty band.' },
+  { code: 'D', name: 'Timed', minutes: 56, order: 3,
+    description: '26 minutes timed plus 30 of extraction. Scheduled days only.' },
+  { code: 'E1', name: 'Vocab', minutes: 20, order: 4, everyDay: true,
+    description: 'Every single day without exception, checkpoint days included.' },
+  { code: 'E2', name: 'Verbal problems', minutes: 40, order: 5, hasTopic: true },
+  { code: 'F', name: 'Log consolidation', minutes: 20, order: 6 },
+];
+
 export const CHESS_COLOURS = ['white', 'black'];
 export const CHESS_RESULTS = ['win', 'loss', 'draw'];
 export const CHESS_VENUES = ['chess.com', 'lichess', 'over the board', 'other'];
@@ -121,6 +148,11 @@ export const DEFAULT_SETTINGS = {
   dayEndHour: 22,
   /** Gym sessions per week. The one number the week is judged against. */
   gymWeeklyTarget: 4,
+  /**
+   * Retrieval spacing for the GRE problem log: re-attempt at +3 days, then
+   * +10. Same scheduler as the question banks, different chain.
+   */
+  greIntervals: [3, 10],
 };
 
 // --- factories --------------------------------------------------------------
@@ -353,6 +385,92 @@ export function makeChessGame(patch = {}) {
   };
 }
 
+export function makeGreBlock(patch = {}) {
+  return {
+    id: uid('grb'),
+    code: '',
+    name: '',
+    minutes: 0,
+    order: 0,
+    /** Always drawn first, whatever else the day contains. */
+    pinFirst: false,
+    /** Runs on every day in the schedule, checkpoints included. */
+    everyDay: false,
+    /** Hidden until this day number — there is nothing to retrieve on day one. */
+    notBeforeDay: null,
+    /** Carries a topic assigned per day in advance. */
+    hasTopic: false,
+    description: '',
+    ...patch,
+  };
+}
+
+export function makeGrePhase(patch = {}) {
+  return {
+    id: uid('grp'),
+    name: '',
+    order: 0,
+    /** The module number that has to be reached, and the day it is due by. */
+    gateModule: null,
+    gateByDay: null,
+    ...patch,
+  };
+}
+
+export function makeGreDay(patch = {}) {
+  return {
+    id: uid('grd'),
+    dayNumber: 0,
+    date: null,
+    phaseId: null,
+    /** Block codes scheduled for this day, beyond the every-day ones. */
+    blockCodes: [],
+    /** Per-day topics, keyed by block code. */
+    topics: {},
+    /** A checkpoint replaces the normal shape of the day. */
+    checkpoint: '',
+    /** Block codes ticked off. */
+    completed: [],
+    /** Which module the study plan had reached by the end of this day. */
+    moduleReached: null,
+    notes: '',
+    ...patch,
+  };
+}
+
+export function makeGreAttempt({ date = todayISO(), correct = false, minutes = null, note = '' } = {}) {
+  return { id: uid('gra'), date, correct: !!correct, minutes: minutes ?? null, note };
+}
+
+/**
+ * One logged problem. Four fields, and the fourth is the point: a rule about
+ * problems in general, roughly six words. An entry without it is not saved.
+ */
+export function makeGreEntry(patch = {}) {
+  const created = todayISO();
+  return {
+    id: uid('gre'),
+    date: created,
+    dayNumber: null,
+    source: '',
+    gave: '',
+    did: '',
+    broke: '',
+    portable: '',
+    correct: false,
+    cause: 'concept',
+    /** Links to an earlier entry whose portable move fired here. */
+    appliedFrom: null,
+    attempts: [],
+    intervalIndex: 0,
+    dueDate: null,
+    retired: false,
+    retiredAt: null,
+    createdAt: created,
+    ...patch,
+  };
+}
+
 export function makeBookmark({ page = 1, note = '' } = {}) {
   return { id: uid('bm'), page, note, createdAt: nowStamp() };
 }
@@ -445,6 +563,10 @@ export function createEmptyState(templates = []) {
     routines: [],
     gymSessions: [],
     painRecords: [],
+    greBlocks: [],
+    grePhases: [],
+    greDays: [],
+    greEntries: [],
     chessGames: [],
     reading: [],
     timeBlocks: [],
@@ -464,6 +586,10 @@ export const COLLECTIONS = [
   'routines',
   'gymSessions',
   'painRecords',
+  'greBlocks',
+  'grePhases',
+  'greDays',
+  'greEntries',
   'chessGames',
   'reading',
   'timeBlocks',

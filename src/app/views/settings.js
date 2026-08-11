@@ -147,6 +147,10 @@ export function render(ctx) {
             state.gymSessions.length = 0;
             state.routines.length = 0;
             state.painRecords.length = 0;
+            state.greBlocks.length = 0;
+            state.grePhases.length = 0;
+            state.greDays.length = 0;
+            state.greEntries.length = 0;
             state.chessGames.length = 0;
             state.reading.length = 0;
             state.timeBlocks.length = 0;

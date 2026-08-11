@@ -1026,6 +1026,102 @@
   background: var(--surface-sunken);
 }
 
+/* --- GRE ------------------------------------------------------------------ */
+
+.gre-block[data-done="true"] {
+  border-left: 2px solid var(--teal-line);
+}
+
+.gre-block[data-done="true"] .gre-block__code {
+  color: var(--teal);
+}
+
+.gre-block__code {
+  display: inline-grid;
+  place-items: center;
+  min-width: 2.2em;
+  padding: 0 var(--sp-1);
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+  font-size: var(--step--1);
+  color: var(--text-muted);
+}
+
+/* The topic assigned in advance, not a generic label. */
+.gre-topic {
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--amber);
+  background: var(--amber-soft);
+  border: 1px solid var(--amber-line);
+  border-radius: var(--radius);
+  padding: var(--sp-1) var(--sp-2);
+}
+
+/* Field four. It is the reason the log exists, so it is the thing you see. */
+.portable {
+  border-left: 2px solid var(--amber-bright);
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--amber-soft);
+  color: var(--amber);
+  font-weight: 500;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.gre-entry[data-correct="true"] { border-left: 2px solid var(--teal-line); }
+.gre-entry[data-correct="false"] { border-left: 2px solid var(--amber-line); }
+
+/* A queued re-attempt is cold until a result is recorded. */
+.retrieval[data-revealed="false"] {
+  border-left: 2px solid var(--locked);
+}
+
+.retrieval[data-revealed="true"] {
+  border-left: 2px solid var(--teal);
+}
+
+.causebar {
+  display: flex;
+  height: 22px;
+  border-radius: 2px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.causebar__part {
+  display: grid;
+  place-items: center;
+  color: #fff;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.causebar__part--concept { background: var(--amber); }
+.causebar__part--format { background: var(--teal); }
+.causebar__part--timing { background: var(--locked); }
+.causebar__part--careless { background: var(--danger); }
+
+.schedule-format {
+  margin: 0;
+  padding: var(--sp-3);
+  background: var(--surface-sunken);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: var(--step--1);
+  color: var(--text-muted);
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+
+.upnext__tick--on {
+  background: var(--teal-soft);
+  border-color: var(--teal-line);
+  color: var(--teal);
+}
+
 /* --- chess ---------------------------------------------------------------- */
 
 .results {
