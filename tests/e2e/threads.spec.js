@@ -211,3 +211,68 @@ test('a task due inside a locked stage stays out of needs action', async ({ page
   await page.goto('/#/today');
   await expect(page.locator('.section', { hasText: 'Needs action' })).toContainText('due but locked');
 });
+
+test('a completed task stops reading as overdue', async ({ page }) => {
+  await page.goto('/#/threads');
+  await page.getByRole('button', { name: 'New thread' }).click();
+  let dialog = page.locator('dialog');
+  await dialog.getByLabel('Name').fill('Compiler');
+  await dialog.getByLabel('First stage').fill('Lexer');
+  await dialog.getByLabel('That stage is done when').fill('tokens tested');
+  await dialog.getByRole('button', { name: 'Create' }).click();
+
+  await page.getByRole('button', { name: '+ Step' }).click();
+  dialog = page.locator('dialog');
+  await dialog.getByLabel('Step title').fill('Numbers');
+  await dialog.getByRole('button', { name: 'Add' }).click();
+
+  await page.getByPlaceholder('Add a task').fill('Integer literals');
+  await page.getByPlaceholder('Add a task').press('Enter');
+
+  // Give it a due date well in the past.
+  await page.locator('.task__title').click();
+  dialog = page.locator('dialog');
+  await dialog.getByLabel('Due').fill('2020-01-01');
+  await dialog.getByRole('button', { name: 'Save' }).click();
+
+  const meta = page.locator('.task .task__meta');
+  await expect(meta.locator('.tag--danger')).toHaveCount(1);
+  await expect(meta).toContainText('overdue');
+
+  // Ticking it makes the date history, not a deadline.
+  await page.locator('.task__box').click();
+  await expect(page.locator('.task')).toHaveClass(/task--done/);
+  await expect(meta.locator('.tag--danger')).toHaveCount(0);
+  await expect(meta).not.toContainText('overdue');
+  await expect(meta).toContainText('due 1 Jan');
+
+  // And it comes back the moment the task is unticked.
+  await page.locator('.task__box').click();
+  await expect(meta.locator('.tag--danger')).toHaveCount(1);
+});
+
+test('the task editor says that Due and Estimate are optional', async ({ page }) => {
+  await page.goto('/#/threads');
+  await page.getByRole('button', { name: 'New thread' }).click();
+  let dialog = page.locator('dialog');
+  await dialog.getByLabel('Name').fill('Compiler');
+  await dialog.getByLabel('First stage').fill('Lexer');
+  await dialog.getByLabel('That stage is done when').fill('tokens tested');
+  await dialog.getByRole('button', { name: 'Create' }).click();
+
+  await page.getByRole('button', { name: '+ Step' }).click();
+  dialog = page.locator('dialog');
+  await dialog.getByLabel('Step title').fill('Numbers');
+  await dialog.getByRole('button', { name: 'Add' }).click();
+  await page.getByPlaceholder('Add a task').fill('Integer literals');
+  await page.getByPlaceholder('Add a task').press('Enter');
+
+  await page.locator('.task__title').click();
+  dialog = page.locator('dialog');
+  await expect(dialog).toContainText('Only set one if the date is real');
+  await expect(dialog).toContainText('Optional, in minutes');
+
+  // And saving with both blank is fine.
+  await dialog.getByRole('button', { name: 'Save' }).click();
+  await expect(page.locator('.task__meta .tag')).toHaveCount(0);
+});

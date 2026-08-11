@@ -22,9 +22,17 @@ export function statTile(value, label, variant = '') {
   ]);
 }
 
-/** A due date rendered with the right urgency colour. */
-export function dueTag(due, today) {
+/**
+ * A due date rendered with the right urgency colour.
+ *
+ * `done` matters: once a task is ticked its due date is history, not a
+ * deadline. Measuring it against today would keep shouting "3d overdue" at
+ * something already finished — and in the amber-as-signal-lamp scheme, the
+ * loudest thing on a completed row would be the one thing needing no action.
+ */
+export function dueTag(due, today, { done = false } = {}) {
   if (!due) return null;
+  if (done) return tag(`due ${formatDate(due)}`);
   const delta = diffDays(today, due);
   const variant = delta === null ? '' : delta < 0 ? 'danger' : delta <= 2 ? 'amber' : '';
   return tag(`${formatDate(due)} · ${relativeDay(due, today)}`, variant);

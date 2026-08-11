@@ -40,7 +40,8 @@ test('a well-formed outline parses into the full tree', () => {
   assert.deepEqual(thread.stages[0].steps[0].tasks.map((t) => t.title), [
     'Integer literals', 'Float literals', 'Hex and binary',
   ]);
-  assert.deepEqual(result.stats, { threads: 1, stages: 2, steps: 3, tasks: 5, implicitSteps: 0 });
+  assert.deepEqual(result.stats,
+    { threads: 1, stages: 2, steps: 3, tasks: 5, implicitSteps: 0, links: 0, tasksWithLinks: 0 });
 });
 
 test('estimates and due dates are pulled off the task title', () => {
@@ -391,4 +392,127 @@ test('errors carry the line number and the offending text', () => {
   const error = result.errors.find((e) => e.text === '!!! broken !!!');
   assert.ok(error, 'the bad line is reported verbatim');
   assert.equal(error.line, 6);
+});
+
+// --- links ------------------------------------------------------------------
+
+test('a bare URL in a task line becomes a link and leaves the title', () => {
+  const parsed = parseOutline(`# T
+## S
+> done when this is done
+### Step
+- Read the spec https://example.com/spec
+`);
+  assert.equal(parsed.ok, true);
+  const [task] = parsed.threads[0].stages[0].steps[0].tasks;
+  assert.equal(task.title, 'Read the spec', 'the title reads as a title again');
+  assert.deepEqual(task.links, [{ url: 'https://example.com/spec', label: '' }]);
+  assert.equal(parsed.stats.links, 1);
+  assert.equal(parsed.stats.tasksWithLinks, 1);
+});
+
+test('a markdown link keeps its text as the title and its url as the link', () => {
+  const parsed = parseOutline(`# T
+## S
+> done when this is done
+### Step
+- See [the RFC](https://example.com/rfc) before starting
+`);
+  const [task] = parsed.threads[0].stages[0].steps[0].tasks;
+  assert.equal(task.title, 'See the RFC before starting');
+  assert.deepEqual(task.links, [{ url: 'https://example.com/rfc', label: 'the RFC' }]);
+});
+
+test('several links on one task all survive', () => {
+  const parsed = parseOutline(`# T
+## S
+> done when this is done
+### Step
+- Compare https://example.com/a with https://example.com/b
+`);
+  const [task] = parsed.threads[0].stages[0].steps[0].tasks;
+  assert.equal(task.title, 'Compare with');
+  assert.deepEqual(task.links.map((l) => l.url), ['https://example.com/a', 'https://example.com/b']);
+});
+
+test('trailing punctuation belongs to the sentence, not the URL', () => {
+  const parsed = parseOutline(`# T
+## S
+> done when this is done
+### Step
+- Check https://example.com/x, then move on
+- Read https://example.com/y.
+`);
+  const [first, second] = parsed.threads[0].stages[0].steps[0].tasks;
+  assert.equal(first.links[0].url, 'https://example.com/x', 'the comma is not part of the address');
+  assert.equal(first.title, 'Check, then move on', 'and the comma is not left stranded either');
+  assert.equal(second.links[0].url, 'https://example.com/y');
+});
+
+test('a link does not interfere with the estimate or the due date', () => {
+  const parsed = parseOutline(`# T
+## S
+> done when this is done
+### Step
+- Read the docs https://example.com/@handle/page @45m ^2026-09-01
+`);
+  assert.deepEqual(parsed.errors, []);
+  const [task] = parsed.threads[0].stages[0].steps[0].tasks;
+  assert.equal(task.title, 'Read the docs');
+  assert.equal(task.estimateMinutes, 45, 'the @ inside the URL is not an estimate');
+  assert.equal(task.due, '2026-09-01');
+  assert.equal(task.links[0].url, 'https://example.com/@handle/page');
+});
+
+test('a task that is only a URL keeps the URL as its title rather than becoming empty', () => {
+  const parsed = parseOutline(`# T
+## S
+> done when this is done
+### Step
+- https://example.com/read-this
+`);
+  // Nothing is left to call it, so the parser refuses rather than creating a
+  // task with a blank title.
+  assert.equal(parsed.ok, false);
+  assert.match(parsed.errors.map((e) => e.message).join(' '), /no title/);
+});
+
+test('lifting a link out of a title is reported, once, rather than silently', () => {
+  const parsed = parseOutline(`# T
+## S
+> done when this is done
+### Step
+- One https://example.com/a
+- Two https://example.com/b
+- Three
+`);
+  assert.equal(parsed.ok, true);
+  const messages = parsed.warnings.map((w) => w.message).join(' ');
+  assert.match(messages, /2 links in 2 task titles moved onto the task itself/);
+  assert.equal(parsed.warnings.filter((w) => /moved onto the task/.test(w.message)).length, 1,
+    'one summary, not one per task');
+});
+
+test('a task with no link has an empty links array, not a missing one', () => {
+  const parsed = parseOutline(`# T
+## S
+> done when this is done
+### Step
+- Plain task
+`);
+  assert.deepEqual(parsed.threads[0].stages[0].steps[0].tasks[0].links, []);
+  assert.equal(parsed.stats.links, 0);
+  assert.equal(parsed.stats.tasksWithLinks, 0);
+});
+
+test('a URL somewhere other than a task line is still refused', () => {
+  const parsed = parseOutline(`# T
+## S
+> done when this is done
+https://example.com/stray
+### Step
+- A task
+`);
+  assert.equal(parsed.ok, false);
+  assert.match(parsed.errors[0].message, /does not match the outline format/);
 });

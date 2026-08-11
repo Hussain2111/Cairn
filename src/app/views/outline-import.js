@@ -6,7 +6,7 @@
 
 import { el, openDialog, toast, tag, copyText } from '../ui.js';
 import { parseOutline, planImport, OUTLINE_EXAMPLE } from '../../core/outline.js';
-import { makeThread, makeStage, makeStep, makeTask } from '../../core/schema.js';
+import { makeThread, makeStage, makeStep, makeTask, makeLink } from '../../core/schema.js';
 
 /** The prompt to hand a chat so its answer pastes straight in. */
 export const OUTLINE_PROMPT = `Break this down as a Cairn outline. Use exactly this format and nothing else:
@@ -21,7 +21,8 @@ Rules:
 - Thread type is one of: project, study, pipeline, habit, reading.
 - EVERY stage needs a "> " done-when line. It must be checkable, not vague.
 - Stages must be in the order they should be done — later ones stay locked until earlier ones finish.
-- Tasks are concrete actions, not headings. @45m is an optional estimate, ^YYYY-MM-DD an optional due date.
+- Tasks are concrete actions, not headings. @45m is an optional estimate, ^YYYY-MM-DD an optional due date. Both are optional — leave them out rather than inventing one.
+- A URL in a task line is kept as a link on that task, so put one there if it is worth keeping.
 - No prose, no commentary, no other markdown. Only the lines above.`;
 
 export function openOutlineImport(ctx) {
@@ -96,6 +97,7 @@ export function openOutlineImport(ctx) {
         tag(`${s.stages} stage${s.stages === 1 ? '' : 's'}`),
         tag(`${s.steps} step${s.steps === 1 ? '' : 's'}`),
         tag(`${s.tasks} task${s.tasks === 1 ? '' : 's'}`),
+        s.links ? tag(`${s.links} link${s.links === 1 ? '' : 's'}`) : null,
       ]),
     );
 
@@ -214,7 +216,7 @@ function wireGo(button, onClick) {
 
 /** Turn the parsed tree into real records, in one undoable step. */
 function commitOutline(ctx, plan) {
-  const created = { threads: 0, stages: 0, tasks: 0 };
+  const created = { threads: 0, stages: 0, tasks: 0, links: 0 };
   let firstThreadId = null;
 
   ctx.commit('import outline', (state) => {
@@ -235,9 +237,18 @@ function commitOutline(ctx, plan) {
         for (const step of stage.steps) {
           const newStep = makeStep({ title: step.title });
           for (const task of step.tasks) {
-            newStep.tasks.push(
-              makeTask({ title: task.title, due: task.due, estimateMinutes: task.estimateMinutes }),
-            );
+            const newTask = makeTask({
+              title: task.title,
+              due: task.due,
+              estimateMinutes: task.estimateMinutes,
+            });
+            // The links array has always been on the task; only the parser
+            // could not fill it.
+            for (const link of task.links ?? []) {
+              newTask.links.push(makeLink({ url: link.url, label: link.label }));
+              created.links += 1;
+            }
+            newStep.tasks.push(newTask);
             created.tasks += 1;
           }
           newStage.steps.push(newStep);
@@ -250,6 +261,7 @@ function commitOutline(ctx, plan) {
 
   toast(
     `Imported ${created.stages} stage(s) and ${created.tasks} task(s)` +
+      (created.links ? ` with ${created.links} link(s)` : '') +
       (created.threads ? ` into ${created.threads} new thread(s).` : '.'),
     { action: { label: 'Undo', onClick: () => { ctx.store.undo(); ctx.render(); } }, timeout: 10000 },
   );

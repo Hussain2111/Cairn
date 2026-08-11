@@ -66,6 +66,7 @@ The second thing it solves: you learn something once, never retrieve it, and it'
 | `- Task` | Task. `-`, `*`, `+` or `1.` all work. |
 | `@45m` | Optional estimate. `@2h`, `@1h30m` and `@90` also parse. |
 | `^2026-09-01` | Optional due date. |
+| a URL | Lifted out of the title onto the task's links. `[label](url)` keeps the label as the title. |
 
 The dialog has a **Copy the prompt for a chat** button. The loop is: describe your project to a chat, paste its answer into Cairn, confirm.
 
@@ -75,7 +76,7 @@ The parser is deliberately strict, because the failure that matters isn't a reje
 - **Counts are self-checked.** Markers found in the text must equal records produced, or the parser refuses rather than passing quietly.
 - **A stage with no done-when blocks the import** and names itself. Chats omit it constantly, and such a stage would be unstartable anyway.
 - **Duplicates are never created by accident.** A thread name you already have gets the new stages appended to it; stage titles that clash are listed before you commit.
-- **Anything inferred is reported** — tasks written straight under a stage get a step called "Tasks", shown as a warning in the preview.
+- **Anything inferred is reported** — tasks written straight under a stage get a step called "Tasks", and a URL lifted out of a title is counted, both shown in the preview before you commit.
 
 Nothing is written until you confirm, and the whole import is one undo.
 
