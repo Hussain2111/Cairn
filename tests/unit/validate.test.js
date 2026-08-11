@@ -36,9 +36,12 @@ test('a well-formed export round-trips exactly', () => {
     questions: 0,
     applications: 0,
     outreach: 0,
-    habits: 0,
     exercises: 0,
+    routines: 0,
     gymSessions: 0,
+    painRecords: 0,
+    greDays: 0,
+    greEntries: 0,
     chessGames: 0,
     reading: 0,
     timeBlocks: 0,
@@ -141,7 +144,7 @@ test('missing collections are backfilled and reported', () => {
   const result = validateImport(JSON.stringify(partial));
   assert.equal(result.ok, true);
   assert.deepEqual(result.state.questions, []);
-  assert.deepEqual(result.state.habits, []);
+  assert.deepEqual(result.state.exercises, []);
   assert.ok(result.notes.some((n) => /questions/.test(n)));
   assert.ok(result.state.noteTemplates.length >= 5, 'built-in templates are restored');
 });
@@ -173,21 +176,40 @@ test('a stray completion date on an open task is cleared', () => {
   assert.equal(result.state.threads[0].stages[0].steps[0].tasks[0].doneAt, null);
 });
 
-test('invalid habit log dates are dropped with a count, and valid ones survive', () => {
+test('a dropped exercise with no reason is kept and asks for one', () => {
   const state = createEmptyState([]);
-  state.habits.push({ id: 'h1', name: 'Running', weeklyTarget: 3, log: ['2026-08-03', 'yesterday', '2026-08-03', '2026-13-40'], archived: false });
+  state.exercises.push({
+    id: 'ex1', name: 'Upright row', muscle: 'shoulders', secondary: ['shoulders', 'nonsense'],
+    equipment: 'trebuchet', status: 'dropped', dropReason: 'because I felt like it', dropNote: '', cues: '',
+  });
   const result = validateImport(JSON.stringify(state));
-  assert.deepEqual(result.state.habits[0].log, ['2026-08-03']);
-  assert.match(messages(result.warnings), /3 invalid or duplicate log date/);
+  assert.equal(result.ok, true);
+  const [exercise] = result.state.exercises;
+  assert.equal(exercise.status, 'dropped');
+  assert.equal(exercise.dropReason, null, 'an unrecognised reason is cleared, not guessed at');
+  assert.equal(exercise.equipment, 'unspecified');
+  assert.deepEqual(exercise.secondary, [], 'a secondary that repeats the primary is not a secondary');
+  assert.match(messages(result.warnings), /not one of disliked, pain, unavailable/);
+});
+
+test('pain with no location is filed rather than dropped', () => {
+  const state = createEmptyState([]);
+  state.painRecords.push({ id: 'p1', date: '2026-08-05', location: '  ', exerciseId: null, when: 'sideways', note: '' });
+  const result = validateImport(JSON.stringify(state));
+  assert.equal(result.ok, true);
+  assert.equal(result.state.painRecords.length, 1);
+  assert.equal(result.state.painRecords[0].location, 'unspecified');
+  assert.equal(result.state.painRecords[0].when, 'during');
+  assert.match(messages(result.warnings), /without saying where/);
 });
 
 test('a time block pointing at a missing thread is kept, unassigned', () => {
   const state = goodState();
-  state.timeBlocks.push({ id: 'b1', date: '2026-08-07', start: '09:00', end: '10:00', threadId: 'thr_gone', taskId: 'task_gone', label: 'Deep work' });
+  state.timeBlocks.push({ id: 'b1', date: '2026-08-07', start: '09:00', end: '10:00', activity: 'thread:thr_gone', taskId: 'task_gone', label: 'Deep work' });
   const result = validateImport(JSON.stringify(state));
   assert.equal(result.ok, true);
   assert.equal(result.state.timeBlocks.length, 1);
-  assert.equal(result.state.timeBlocks[0].threadId, null);
+  assert.equal(result.state.timeBlocks[0].activity, null);
   assert.match(messages(result.warnings), /not in this file/);
 });
 

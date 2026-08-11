@@ -117,15 +117,24 @@ export function render(ctx) {
       ]),
     ]),
 
-    section('Habits', report.habits.length
-      ? [el('div.card', [
-          el('div.card__body.stack--tight.stack', report.habits.map((entry) =>
-            el('div.row.row--between', [
-              el('span', { text: entry.habit.name }),
-              tag(`${entry.count}/${entry.target}`, entry.met ? 'teal' : ''),
-            ]))),
-        ])]
-      : [el('p.muted', { text: 'No habits tracked.' })]),
+    section('Gym', report.gym.target || report.gym.done
+      ? [
+          el('div.card', [
+            el('div.card__body.stack--tight.stack', [
+              el('div.row', [
+                tag(`${report.gym.done}/${report.gym.target || '—'} sessions`, report.gym.met ? 'teal' : ''),
+                ...report.gym.untrained.map((muscle) => tag(`${muscle}: nothing`, 'amber')),
+              ]),
+              ...report.gym.sessions.map(({ session, totals }) =>
+                el('div.row', [
+                  el('span.mono.faint', { text: session.date }),
+                  el('span', { text: `${totals.exercises} exercises · ${totals.sets} sets` }),
+                  totals.skipped ? tag(`${totals.skipped} skipped`, 'amber') : null,
+                ])),
+            ]),
+          ]),
+        ]
+      : [el('p.muted', { text: 'Nothing logged.' })]),
 
     section('Time', report.time.rows.length
       ? [el('div.card', [

@@ -14,7 +14,7 @@ import {
 import { walkTasks, threadProgress, threadStall, isStageComplete } from './threads.js';
 import { weeklyDistribution } from './timeblocks.js';
 import { pipelineStats } from './pipelines.js';
-import { consistency, weekStatus } from './habits.js';
+import { weekProgress, muscleCoverage, sessionsInWeek, sessionTotals } from './gym.js';
 
 export function generateWeeklyReview(state, { today = todayISO(), weekStart = null } = {}) {
   const start = weekStart || startOfWeek(today);
@@ -61,13 +61,18 @@ export function generateWeeklyReview(state, { today = todayISO(), weekStart = nu
 
   const pipeline = pipelineStats(state, { from: start, to: end });
   const time = weeklyDistribution(state, { weekStart: start });
-  const habits = (state?.habits ?? [])
-    .filter((h) => !h.archived)
-    .map((habit) => ({
-      habit,
-      ...weekStatus(habit, start),
-      history: consistency(habit, { today: start, weeks: 6 }),
-    }));
+  // The gym replaced the habit list. What belongs in a weekly review is the
+  // same question the gym view asks: did the week hit its target, and which
+  // muscle groups did it miss.
+  const gymWeek = weekProgress(state, start);
+  const gym = {
+    ...gymWeek,
+    sessions: sessionsInWeek(state, start).map((session) => ({
+      session,
+      totals: sessionTotals(session),
+    })),
+    untrained: muscleCoverage(state, start).filter((row) => !row.trained).map((row) => row.muscle),
+  };
 
   const reading = (state?.reading ?? []).filter((b) => b.status === 'reading');
 
@@ -82,7 +87,7 @@ export function generateWeeklyReview(state, { today = todayISO(), weekStart = nu
     questions,
     pipeline,
     time,
-    habits,
+    gym,
     reading,
     totals: {
       tasksCompleted: threads.reduce((sum, t) => sum + t.completed.length, 0),
@@ -177,11 +182,18 @@ export function weeklyReviewMarkdown(report) {
   lines.push(`- Outreach: ${report.pipeline.outreachSent} sent, ${report.pipeline.replies} replied`);
   lines.push('');
 
-  lines.push('## Habits');
+  lines.push('## Gym');
   lines.push('');
-  if (!report.habits.length) lines.push('_No habits tracked._');
-  for (const entry of report.habits) {
-    lines.push(`- ${entry.habit.name}: ${entry.count}/${entry.target} ${entry.met ? '✓' : ''}`.trimEnd());
+  if (!report.gym.target && !report.gym.done) {
+    lines.push('_Nothing logged._');
+  } else {
+    lines.push(`- Sessions: ${report.gym.done}/${report.gym.target}${report.gym.met ? ' ✓' : ''}`);
+    lines.push(report.gym.untrained.length
+      ? `- Not trained this week: ${report.gym.untrained.join(', ')}`
+      : '- Every muscle group was trained');
+    for (const { session, totals } of report.gym.sessions) {
+      lines.push(`  - ${session.date}: ${totals.exercises} exercise(s), ${totals.sets} sets${totals.skipped ? `, ${totals.skipped} skipped` : ''}`);
+    }
   }
   lines.push('');
 

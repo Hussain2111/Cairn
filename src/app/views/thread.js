@@ -17,6 +17,7 @@ import {
 } from '../../core/threads.js';
 import { makeStage, makeStep, makeTask, THREAD_TYPES } from '../../core/schema.js';
 import { nowStamp, formatDate, formatDuration } from '../../core/dates.js';
+import { activityThreadId } from '../../core/activities.js';
 
 export function title(ctx) {
   const thread = ctx.state.threads.find((t) => t.id === ctx.route.params[0]);
@@ -662,8 +663,8 @@ async function editThread(ctx, thread) {
       const index = state.threads.findIndex((t) => t.id === thread.id);
       if (index >= 0) state.threads.splice(index, 1);
       for (const block of state.timeBlocks) {
-        if (block.threadId === thread.id) {
-          block.threadId = null;
+        if (activityThreadId(block.activity) === thread.id) {
+          block.activity = null;
           block.taskId = null;
         }
       }

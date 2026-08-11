@@ -7,7 +7,7 @@ import { todayISO } from '../core/dates.js';
 import { reviewQueue } from '../core/srs.js';
 import { needsAction } from '../core/pipelines.js';
 import { stalledThreads } from '../core/threads.js';
-import { habitsNotLoggedToday } from '../core/habits.js';
+import { retrievalQueue } from '../core/gre.js';
 import { renderImportReport } from './views/settings.js';
 
 import * as todayView from './views/today.js';
@@ -18,7 +18,8 @@ import * as notesView from './views/notes.js';
 import * as pipelinesView from './views/pipelines.js';
 import * as timeView from './views/time.js';
 import * as weeklyView from './views/weekly.js';
-import * as habitsView from './views/habits.js';
+import * as gymView from './views/gym.js';
+import * as greView from './views/gre.js';
 import * as readingView from './views/reading.js';
 import * as chessView from './views/chess.js';
 import * as searchView from './views/search.js';
@@ -36,7 +37,8 @@ const VIEWS = {
   pipelines: pipelinesView,
   time: timeView,
   weekly: weeklyView,
-  habits: habitsView,
+  gym: gymView,
+  gre: greView,
   chess: chessView,
   reading: readingView,
   search: searchView,
@@ -125,8 +127,8 @@ function renderSidebar() {
   const due = reviewQueue(state, { today }).length;
   const actions = needsAction(state, { today }).count;
   const stalled = stalledThreads(state, { today }).length;
-  const habits = habitsNotLoggedToday(state, today).length;
   const activeThreads = state.threads.filter((t) => !t.archived).length;
+  const greDue = retrievalQueue(state, { today }).length;
 
   clear(sidebarNode);
   sidebarNode.appendChild(
@@ -145,7 +147,8 @@ function renderSidebar() {
         navLink('#/time', 'Time'),
         navLink('#/weekly', 'Weekly review'),
         el('div.nav__section', { text: 'Keep going' }),
-        navLink('#/habits', 'Habits', habits || null, true),
+        navLink('#/gre', 'GRE', greDue || null),
+        navLink('#/gym', 'Gym', null, true),
         navLink('#/chess', 'Chess', state.chessGames.length || null, true),
         navLink('#/reading', 'Reading', state.reading.length || null, true),
       ]),
@@ -157,19 +160,21 @@ function renderSidebar() {
     ]),
   );
 
+  // All three read as one list, so all three are the same component. Search and
+  // Shortcuts keep their handlers as buttons; only the styling is shared.
   sidebarNode.appendChild(
     el('div.sidebar__foot', [
-      el('button.btn.btn--ghost.btn--sm.btn--block', {
+      el('button.nav__link', {
         type: 'button',
-        text: 'Search  /',
+        text: 'Search',
         onclick: () => navigate('#/search'),
-      }),
-      el('a.nav__link', { href: '#/settings', text: 'Settings' }),
-      el('button.btn.btn--ghost.btn--sm.btn--block', {
+      }, [el('span.nav__key.mono', { text: '/' })]),
+      navLink('#/settings', 'Settings'),
+      el('button.nav__link', {
         type: 'button',
-        text: 'Shortcuts  ?',
+        text: 'Shortcuts',
         onclick: showShortcuts,
-      }),
+      }, [el('span.nav__key.mono', { text: '?' })]),
     ]),
   );
 }

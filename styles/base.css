@@ -144,6 +144,21 @@ kbd {
   border-left: 2px solid transparent;
 }
 
+/* Some nav entries are buttons rather than links — Search and Shortcuts open a
+ * view and a dialog respectively. A button brings its own centring, chrome and
+ * font, all of which have to be undone for the row to sit in the same column as
+ * the links around it. :focus-visible still applies: nothing here touches it. */
+button.nav__link {
+  width: 100%;
+  text-align: start;
+  font: inherit;
+  font-size: var(--step-0);
+  background: none;
+  border: 0;
+  border-left: 2px solid transparent;
+  cursor: pointer;
+}
+
 .nav__link:hover {
   background: var(--surface-hover);
   text-decoration: none;
@@ -155,6 +170,13 @@ kbd {
   color: var(--text);
   border-left-color: var(--amber-bright);
   font-weight: 500;
+}
+
+/* The shortcut key sits where a badge would, so the column stays even. */
+.nav__key {
+  margin-left: auto;
+  font-size: var(--step--1);
+  color: var(--text-faint);
 }
 
 .nav__badge {

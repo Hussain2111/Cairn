@@ -9,9 +9,9 @@ import { pageHead, dueTag } from './shared.js';
 import { upNext, actionableDueTasks, stalledThreads } from '../../core/threads.js';
 import { reviewQueue } from '../../core/srs.js';
 import { needsAction, describeReason } from '../../core/pipelines.js';
-import { habitSummary, toggleLog } from '../../core/habits.js';
-import { isGymHabit } from '../../core/gym.js';
-import { blocksForDate, plannedMinutes, actualMinutes, hasActual } from '../../core/timeblocks.js';
+import { weekProgress, muscleCoverage, sessionsInWeek } from '../../core/gym.js';
+import { activityLabel } from '../../core/activities.js';
+import { blocksForDate, plannedMinutes, loggedMinutes, isLogged } from '../../core/timeblocks.js';
 import { formatLongDate, formatDuration, nowStamp } from '../../core/dates.js';
 import { newThread } from './threads.js';
 
@@ -26,7 +26,7 @@ export function render(ctx) {
   const actions = needsAction(ctx.state, { today });
   const dueTasks = actionableDueTasks(ctx.state, { today });
   const blocks = blocksForDate(ctx.state, today);
-  const habits = habitSummary(ctx.state, { today });
+  const gym = weekProgress(ctx.state, today);
   const stalled = stalledThreads(ctx.state, { today });
 
   return el('div', [
@@ -98,7 +98,7 @@ export function render(ctx) {
         el('div.section__rule'),
         el('span.section__meta', {
           text: blocks.length
-            ? `${formatDuration(blocks.reduce((s, b) => s + plannedMinutes(b), 0))} planned · ${formatDuration(blocks.reduce((s, b) => s + actualMinutes(b), 0))} logged`
+            ? `${formatDuration(blocks.reduce((s, b) => s + plannedMinutes(b), 0))} planned · ${formatDuration(blocks.reduce((s, b) => s + loggedMinutes(b), 0))} logged`
             : 'nothing planned',
         }),
       ]),
@@ -110,21 +110,14 @@ export function render(ctx) {
           ]),
     ]),
 
-    // 5. Habits.
+    // 5. The gym.
     el('section.section', [
       el('div.section__head', [
-        el('h2.section__title', { text: 'Habits' }),
+        el('h2.section__title', { text: 'Gym' }),
         el('div.section__rule'),
-        el('span.section__meta', { text: `${habits.filter((h) => h.loggedToday).length}/${habits.length} logged` }),
+        el('span.section__meta', { text: gym.target ? `${gym.done}/${gym.target} this week` : 'no target set' }),
       ]),
-      habits.length
-        ? el('div.card', [
-            el('div.card__body.stack--tight.stack', habits.map((entry) => habitRow(ctx, entry, today))),
-          ])
-        : el('div.row', [
-            el('span.muted', { text: 'No habits tracked.' }),
-            el('a.btn.btn--sm', { href: '#/habits', text: 'Add one' }),
-          ]),
+      gymRow(ctx, gym, today),
     ]),
   ]);
 }
@@ -242,45 +235,45 @@ function taskDueRow(ctx, entry) {
 }
 
 function blockRow(ctx, block) {
-  const thread = ctx.state.threads.find((t) => t.id === block.threadId);
   return el('div.row.row--between', [
     el('div', [
       el('span.mono', { text: `${block.start}–${block.end}` }),
       ' ',
-      el('span', { text: block.label || thread?.name || 'Unassigned' }),
+      el('span', { text: block.label || activityLabel(ctx.state, block.activity) }),
     ]),
     el('div.row', [
-      hasActual(block)
-        ? tag(`logged ${formatDuration(actualMinutes(block))}`, 'teal')
-        : tag('not logged'),
+      isLogged(block)
+        ? tag(`logged ${formatDuration(loggedMinutes(block))}`, 'teal')
+        : tag('planned'),
       el('a.btn.btn--ghost.btn--sm', { href: '#/time', text: 'Open' }),
     ]),
   ]);
 }
 
-function habitRow(ctx, entry, today) {
-  const { habit, count, target, met, loggedToday } = entry;
-  // A gym habit's log is a mirror of its sessions, so ticking it here would be
-  // overwritten the next time one is saved. It links to the session form
-  // instead, which is where the day actually gets recorded.
-  const gym = isGymHabit(habit);
+/**
+ * The gym on Today is one line: how the week stands, and which groups have had
+ * nothing. That second half is what makes it actionable rather than a score.
+ */
+function gymRow(ctx, gym, today) {
+  const untrained = muscleCoverage(ctx.state, today).filter((row) => !row.trained);
+  const loggedToday = sessionsInWeek(ctx.state, today).some((session) => session.date === today);
 
-  return el('div.row.row--between', [
-    el('div.row', [
-      gym
-        ? el('a.btn.btn--sm' + (loggedToday ? '' : '.btn--ghost'), {
-            href: `#/habits/${habit.id}`,
-            text: loggedToday ? '✓ session logged' : 'Log a session',
-          })
-        : el('button.btn.btn--sm' + (loggedToday ? '' : '.btn--ghost'), {
-            type: 'button',
-            text: loggedToday ? '✓ logged' : 'Log today',
-            onclick: () => ctx.commit('log habit', () => toggleLog(habit, today), { undoable: false }),
-          }),
-      el('span', { text: habit.name }),
-    ]),
-    el('div.row', [
-      tag(`${count}/${target} this week`, met ? 'teal' : ''),
+  return el('div.card', [
+    el('div.card__body.stack--tight.stack', [
+      el('div.row.row--between', [
+        el('div.row', [
+          tag(`${gym.done}/${gym.target || '—'} sessions`, gym.met ? 'teal' : ''),
+          tag(`${gym.daysLeft} day${gym.daysLeft === 1 ? '' : 's'} left`,
+            gym.remaining && gym.daysLeft < gym.remaining ? 'danger' : ''),
+          loggedToday ? tag('logged today', 'teal') : null,
+        ]),
+        el('a.btn.btn--sm', { href: '#/gym', text: 'Open the gym' }),
+      ]),
+      el('p.muted', {
+        text: untrained.length
+          ? `No direct work this week: ${untrained.map((row) => row.muscle).join(', ')}.`
+          : 'Every muscle group has had direct work this week.',
+      }),
     ]),
   ]);
 }

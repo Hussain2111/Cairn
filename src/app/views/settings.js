@@ -3,8 +3,6 @@
 
 import { el, tag, empty, confirm, toast, downloadFile, openDialog } from '../ui.js';
 import { pageHead, statTile, editRecord } from './shared.js';
-import { MUSCLE_GROUPS, makeExercise } from '../../core/schema.js';
-import { allExercises, exerciseUsage, exerciseNameTaken, seedExercises } from '../../core/gym.js';
 import { pruneOrphans } from '../books-db.js';
 import { normaliseIntervals } from '../../core/srs.js';
 import { summarise } from '../../core/validate.js';
@@ -64,6 +62,17 @@ export function render(ctx) {
       }),
     ]),
 
+    section('Gym', [
+      numberField('Gym sessions per week', settings.gymWeeklyTarget, (value) => {
+        ctx.commit('set gym target', () => {
+          settings.gymWeeklyTarget = Math.max(0, Math.round(Number(value) || 0));
+        }, { undoable: false });
+      }),
+      el('p.field__hint', {
+        text: 'The number the week is judged against. Exercises, the rotation and everything else live in Gym › Library.',
+      }),
+    ]),
+
     section('Your data', [
       el('div.grid.grid--3', [
         statTile(summary.threads, 'threads'),
@@ -105,8 +114,6 @@ export function render(ctx) {
         : null,
     ]),
 
-    exercisesSection(ctx),
-
     ctx.state.archivedStages.length ? archivedSection(ctx) : null,
 
     section('Danger zone', [
@@ -136,9 +143,14 @@ export function render(ctx) {
             state.questions.length = 0;
             state.applications.length = 0;
             state.outreach.length = 0;
-            state.habits.length = 0;
             state.exercises.length = 0;
             state.gymSessions.length = 0;
+            state.routines.length = 0;
+            state.painRecords.length = 0;
+            state.greBlocks.length = 0;
+            state.grePhases.length = 0;
+            state.greDays.length = 0;
+            state.greEntries.length = 0;
             state.chessGames.length = 0;
             state.reading.length = 0;
             state.timeBlocks.length = 0;
@@ -169,152 +181,6 @@ function numberField(label, value, onCommit, type = 'number') {
   const control = el('input.input', { type, value: String(value ?? '') });
   control.addEventListener('change', () => onCommit(control.value));
   return el('label.field', [el('span.field__label', { text: label }), control]);
-}
-
-// --- exercises --------------------------------------------------------------
-
-/**
- * The exercise list a gym session picks from.
- *
- * Retiring is the normal way to remove one: it disappears from the picker while
- * every session that used it stays readable, because the sessions hold the id
- * and the record never leaves. Deleting is only offered for an exercise nothing
- * has ever used — otherwise it would turn history into "Removed exercise".
- */
-function exercisesSection(ctx) {
-  const all = allExercises(ctx.state);
-  const live = all.filter((e) => !e.retired);
-  const retired = all.filter((e) => e.retired);
-
-  return section('Exercises', [
-    el('p.field__hint', {
-      text: 'What a gym session can pick from. Retiring an exercise takes it out of the picker and leaves every session that used it exactly as it was.',
-    }),
-
-    all.length
-      ? el('div.stack--tight.stack', [
-          ...MUSCLE_GROUPS.filter((muscle) => live.some((e) => e.muscle === muscle)).flatMap((muscle) => [
-            el('div.section__meta', { text: muscle }),
-            ...live.filter((e) => e.muscle === muscle).map((exercise) => exerciseRow(ctx, exercise)),
-          ]),
-          retired.length
-            ? el('details.details', [
-                el('summary', { text: `${retired.length} retired` }),
-                el('div.stack--tight.stack', retired.map((exercise) => exerciseRow(ctx, exercise))),
-              ])
-            : null,
-        ])
-      : el('p.field__hint', { text: 'No exercises yet. Creating a gym habit seeds a starter list, or add them here.' }),
-
-    el('div.row', [
-      el('button.btn', { type: 'button', text: 'Add an exercise', onclick: () => editExercise(ctx, null) }),
-      all.length ? null : el('button.btn', {
-        type: 'button',
-        text: 'Add the starter list',
-        onclick: () => {
-          const added = ctx.commit('seed exercises', (state) => seedExercises(state));
-          toast(`${added} exercises added. Rename or retire whatever does not match your gym.`);
-        },
-      }),
-    ]),
-  ]);
-}
-
-function exerciseRow(ctx, exercise) {
-  const usage = exerciseUsage(ctx.state, exercise.id);
-  return el('div.row.row--between', [
-    el('div.row', [
-      el('span.break', { text: exercise.name }),
-      exercise.retired ? tag('retired', 'locked') : null,
-      usage.sessions
-        ? el('span.section__meta', { text: `${usage.sets} sets across ${usage.sessions} session(s)` })
-        : el('span.section__meta', { text: 'never used' }),
-    ]),
-    el('div.row', [
-      el('button.btn.btn--ghost.btn--sm', {
-        type: 'button',
-        text: 'Edit',
-        'aria-label': `Edit ${exercise.name}`,
-        onclick: () => editExercise(ctx, exercise),
-      }),
-      el('button.btn.btn--ghost.btn--sm', {
-        type: 'button',
-        text: exercise.retired ? 'Bring back' : 'Retire',
-        'aria-label': `${exercise.retired ? 'Bring back' : 'Retire'} ${exercise.name}`,
-        onclick: () => ctx.commit(exercise.retired ? 'unretire exercise' : 'retire exercise', () => {
-          exercise.retired = !exercise.retired;
-        }, { undoable: false }),
-      }),
-    ]),
-  ]);
-}
-
-async function editExercise(ctx, exercise) {
-  const isNew = !exercise;
-  const values = await editRecord({
-    title: isNew ? 'Add an exercise' : 'Exercise',
-    submitLabel: isNew ? 'Add' : 'Save',
-    deletable: !isNew,
-    fields: [
-      { key: 'name', label: 'Name', required: true, placeholder: 'e.g. Incline dumbbell press' },
-      {
-        key: 'muscle',
-        label: 'Primary muscle group',
-        type: 'select',
-        options: MUSCLE_GROUPS,
-        default: 'chest',
-        hint: 'One group per exercise — this is what the weekly coverage counts.',
-      },
-    ],
-    values: exercise ?? {},
-  });
-  if (!values) return;
-
-  if (values.__delete) {
-    const usage = exerciseUsage(ctx.state, exercise.id);
-    if (usage.sessions) {
-      // Deleting would leave those sessions naming a record that no longer
-      // exists. Retiring does the same job without rewriting history.
-      const answer = await confirm({
-        title: 'Retire it instead',
-        message: `"${exercise.name}" appears in ${usage.sessions} session(s). Deleting it would leave those sets labelled "Removed exercise". Retiring takes it out of the picker and leaves the history intact.`,
-        confirmLabel: 'Retire it',
-        danger: false,
-      });
-      if (answer !== 'confirm') return;
-      ctx.commit('retire exercise', () => { exercise.retired = true; }, { undoable: false });
-      return;
-    }
-    const answer = await confirm({
-      title: 'Delete this exercise?',
-      message: `"${exercise.name}" has never been used, so nothing else changes.`,
-      confirmLabel: 'Delete',
-    });
-    if (answer !== 'confirm') return;
-    ctx.commit('delete exercise', (state) => {
-      const index = state.exercises.findIndex((e) => e.id === exercise.id);
-      if (index >= 0) state.exercises.splice(index, 1);
-    });
-    return;
-  }
-
-  if (exerciseNameTaken(ctx.state, values.name, exercise?.id)) {
-    toast(`There is already an exercise called "${values.name}".`, { variant: 'danger' });
-    return;
-  }
-
-  if (isNew) {
-    ctx.commit('add exercise', (state) => {
-      state.exercises.push(makeExercise({ name: values.name, muscle: values.muscle }));
-    }, { undoable: false });
-    return;
-  }
-  // Renaming is a correction, so it propagates to every session that used it —
-  // which is the point of storing the id rather than the name.
-  ctx.commit('edit exercise', () => {
-    exercise.name = values.name;
-    exercise.muscle = values.muscle;
-  }, { undoable: false });
 }
 
 function archivedSection(ctx) {
@@ -445,7 +311,8 @@ export function renderImportReport(report) {
         tag(`${report.summary.notes} notes`),
         tag(`${report.summary.applications} applications`),
         tag(`${report.summary.outreach} outreach`),
-        tag(`${report.summary.habits} habits`),
+        tag(`${report.summary.exercises} exercises`),
+        tag(`${report.summary.gymSessions} gym sessions`),
         tag(`${report.summary.timeBlocks} time blocks`),
       ]),
     );

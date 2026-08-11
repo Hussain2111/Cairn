@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { generateWeeklyReview, weeklyReviewMarkdown } from '../../src/core/weekly.js';
-import { weeklyDistribution, plannedMinutes, actualMinutes, overlaps, dayTotals } from '../../src/core/timeblocks.js';
+import { weeklyDistribution, blockMinutes, plannedMinutes, loggedMinutes, overlaps, dayTotals } from '../../src/core/timeblocks.js';
 import { search } from '../../src/core/search.js';
-import { createEmptyState, makeThread, makeStage, makeStep, makeTask, makeQuestion, makeApplication, makeHabit, makeTimeBlock } from '../../src/core/schema.js';
+import { createEmptyState, makeThread, makeStage, makeStep, makeTask, makeQuestion, makeApplication, makeTimeBlock, makeExercise, makeGymSession, makeSessionExercise, makeSet } from '../../src/core/schema.js';
 
 const TODAY = '2026-08-07'; // Friday; the week runs Sun 02 -> Sat 08
 
@@ -51,14 +51,16 @@ function fixture() {
     makeApplication({ company: 'Old Co', role: 'Engineer', dateApplied: '2026-06-01' }),
   );
 
-  const habit = makeHabit({ name: 'Gym', weeklyTarget: 3 });
-  habit.log = ['2026-08-03', '2026-08-05', '2026-08-06'];
-  state.habits.push(habit);
 
+  // A plan and what actually happened are separate blocks now.
+  const on = (id) => `thread:${id}`;
   state.timeBlocks.push(
-    makeTimeBlock({ date: '2026-08-04', start: '09:00', end: '12:00', threadId: thread.id, actualStart: '09:30', actualEnd: '11:00' }),
-    makeTimeBlock({ date: '2026-08-05', start: '13:00', end: '14:00', threadId: quiet.id, actualStart: '13:00', actualEnd: '13:30' }),
-    makeTimeBlock({ date: '2026-07-28', start: '09:00', end: '17:00', threadId: thread.id, actualStart: '09:00', actualEnd: '17:00' }),
+    makeTimeBlock({ date: '2026-08-04', start: '09:00', end: '12:00', activity: on(thread.id) }),
+    makeTimeBlock({ date: '2026-08-04', start: '09:30', end: '11:00', activity: on(thread.id), status: 'logged' }),
+    makeTimeBlock({ date: '2026-08-05', start: '13:00', end: '14:00', activity: on(quiet.id) }),
+    makeTimeBlock({ date: '2026-08-05', start: '13:00', end: '13:30', activity: on(quiet.id), status: 'logged' }),
+    makeTimeBlock({ date: '2026-07-28', start: '09:00', end: '17:00', activity: on(thread.id) }),
+    makeTimeBlock({ date: '2026-07-28', start: '09:00', end: '17:00', activity: on(thread.id), status: 'logged' }),
   );
 
   return state;
@@ -66,11 +68,18 @@ function fixture() {
 
 // --- time blocks ------------------------------------------------------------
 
-test('planned and actual minutes come from the two time pairs', () => {
-  const block = makeTimeBlock({ start: '09:00', end: '12:00', actualStart: '09:30', actualEnd: '11:00' });
-  assert.equal(plannedMinutes(block), 180);
-  assert.equal(actualMinutes(block), 90);
-  assert.equal(actualMinutes(makeTimeBlock({ actualStart: null, actualEnd: null })), 0);
+test('a block counts towards planned or logged, never both', () => {
+  const plan = makeTimeBlock({ start: '09:00', end: '12:00' });
+  assert.equal(blockMinutes(plan), 180);
+  assert.equal(plannedMinutes(plan), 180);
+  assert.equal(loggedMinutes(plan), 0);
+
+  const done = makeTimeBlock({ start: '09:30', end: '11:00', status: 'logged' });
+  assert.equal(blockMinutes(done), 90);
+  assert.equal(plannedMinutes(done), 0);
+  assert.equal(loggedMinutes(done), 90);
+
+  assert.equal(blockMinutes(makeTimeBlock({ start: null, end: null })), 0);
 });
 
 test('overlapping blocks on the same day are detected, adjacent ones are not', () => {
@@ -88,19 +97,20 @@ test('the weekly distribution only counts blocks inside the week', () => {
   const dist = weeklyDistribution(state, { today: TODAY });
   assert.equal(dist.weekStart, '2026-08-02');
   assert.equal(dist.planned, 240, 'the 8h block in the previous week is excluded');
-  assert.equal(dist.actual, 120);
+  assert.equal(dist.logged, 120);
   assert.equal(dist.rows[0].name, 'Compiler');
-  assert.equal(dist.rows[0].actual, 90);
+  assert.equal(dist.rows[0].logged, 90);
   assert.equal(dist.rows[0].drift, -90, 'planned 3h, did 1h30');
-  assert.equal(Math.round(dist.rows[0].shareActual * 100), 75);
+  assert.equal(Math.round(dist.rows[0].shareLogged * 100), 75);
 });
 
 test('day totals gather the blocks for one date', () => {
   const totals = dayTotals(fixture(), '2026-08-04');
-  assert.equal(totals.blocks.length, 1);
+  assert.equal(totals.blocks.length, 2);
   assert.equal(totals.planned, 180);
-  assert.equal(totals.actual, 90);
-  assert.equal(totals.logged, 1);
+  assert.equal(totals.logged, 90);
+  assert.equal(totals.plannedCount, 1);
+  assert.equal(totals.loggedCount, 1);
 });
 
 // --- weekly review ----------------------------------------------------------
@@ -131,10 +141,23 @@ test('the review flags stalled threads', () => {
   assert.deepEqual(report.stalled.map((t) => t.thread.name), ['GRE prep']);
 });
 
-test('habit progress for the week is included', () => {
-  const report = generateWeeklyReview(fixture(), { today: TODAY });
-  assert.equal(report.habits[0].count, 3);
-  assert.equal(report.habits[0].met, true);
+test('gym progress for the week is included, with the groups it missed', () => {
+  const state = fixture();
+  const bench = makeExercise({ name: 'Bench press', muscle: 'chest' });
+  state.exercises.push(bench);
+  state.settings.gymWeeklyTarget = 2;
+  for (const date of ['2026-08-03', '2026-08-05']) {
+    const session = makeGymSession({ date });
+    session.exercises = [makeSessionExercise({ exerciseId: bench.id, sets: [makeSet({ reps: 10, weight: 60 })] })];
+    state.gymSessions.push(session);
+  }
+
+  const report = generateWeeklyReview(state, { today: TODAY });
+  assert.equal(report.gym.done, 2);
+  assert.equal(report.gym.target, 2);
+  assert.equal(report.gym.met, true);
+  assert.equal(report.gym.untrained.includes('chest'), false);
+  assert.equal(report.gym.untrained.includes('legs'), true, 'the gaps are the useful half');
 });
 
 test('the markdown export carries the substance of the report', () => {
@@ -144,7 +167,7 @@ test('the markdown export carries the substance of the report', () => {
   assert.match(md, /\*\*Did not move\.\*\*/);
   assert.match(md, /frame clause syntax/, 'hesitations are what make the review worth reading');
   assert.match(md, /Backend engineer at Acme/);
-  assert.match(md, /Gym: 3\/3/);
+  assert.match(md, /Sessions: 0\/4/);
   assert.match(md, /## Time/);
   assert.doesNotMatch(md, /undefined/);
   assert.doesNotMatch(md, /\[object Object\]/);
