@@ -54,15 +54,14 @@ async function seed(page) {
         attempts: [{ id: 'att1', date: '2026-08-01', unaided: true, minutes: 14, hesitation: 'frame clause' }],
       });
       state.exercises.push({
-        id: 'ex_seed', name: 'Bench press', muscle: 'chest', secondary: ['arms'], equipment: 'barbell',
-        status: 'active', dropReason: null, dropNote: '', cues: 'brace, elbows at 45', createdAt: '2026-06-01',
+        id: 'ex_seed', name: 'Bench press', muscle: 'chest', secondary: ['arms'],
+        status: 'active', createdAt: '2026-06-01',
       });
       state.gymSessions.push({
-        id: 'gym_seed', routineId: null, date: '2026-08-05', startTime: '18:00', endTime: '19:00',
-        durationMinutes: null, warmup: true, warmupMinutes: 10, notes: '', createdAt: '2026-08-05T19:00:00',
-        skipped: [],
+        id: 'gym_seed', date: '2026-08-05', startTime: '18:00', endTime: '19:00',
+        notes: 'ten minutes on the bike first', createdAt: '2026-08-05T19:00:00',
         exercises: [{
-          id: 'sx1', exerciseId: 'ex_seed', substitutedFor: null, note: 'no tension in the target muscle',
+          id: 'sx1', exerciseId: 'ex_seed', note: 'no tension in the target muscle',
           sets: [{ id: 'set1', reps: 10, weight: 60 }],
         }],
       });
@@ -175,7 +174,7 @@ test('an older-schema file migrates on import and reports what changed', async (
       questions: window.cairn.store.state.questions.map((q) => [q.id, q.bank]),
       stageForced: window.cairn.store.state.threads[0].stages[0].forceCompleted,
       version: window.cairn.store.state.schemaVersion,
-      collections: ['exercises', 'routines', 'gymSessions', 'painRecords', 'greDays', 'greEntries', 'chessGames'].filter(
+      collections: ['exercises', 'gymSessions', 'painRecords', 'greDays', 'greEntries'].filter(
         (key) => Array.isArray(window.cairn.store.state[key]),
       ),
       habitsGone: window.cairn.store.state.habits === undefined,
@@ -184,11 +183,11 @@ test('an older-schema file migrates on import and reports what changed', async (
 
   expect(report.ok).toBe(true);
   // A v1 file runs the whole chain, not just the first step.
-  expect(report.version).toBe(6);
+  expect(report.version).toBe(7);
   expect(report.questions).toEqual([['q1', 'sql']]);
   expect(report.stageForced).toBe(true);
   expect(report.notes.join(' ')).toContain('migrated from schema v1');
-  expect(report.collections).toEqual(['exercises', 'routines', 'gymSessions', 'painRecords', 'greDays', 'greEntries', 'chessGames']);
+  expect(report.collections).toEqual(['exercises', 'gymSessions', 'painRecords', 'greDays', 'greEntries']);
   expect(report.habitsGone).toBe(true);
 });
 

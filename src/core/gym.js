@@ -1,22 +1,15 @@
 // The gym.
 //
-// This is the only thing tracked by session rather than by tick, because *that
-// I went* is not the useful part. What matters is which muscles the week has
-// touched, whether a load is moving, whether a pain follows one exercise or
-// follows me, and which variants of a movement I can actually do.
+// Two questions, and only two: is the weight moving, and does anything hurt.
+// Everything here answers one of them. A session is a date, a pair of times and
+// the exercises done; per exercise, the sets and one line about how it felt.
+// Pain is kept apart from that line, because a paragraph cannot be grouped and
+// grouping is the only thing that makes pain worth recording.
 //
 // Weeks run Sunday to Saturday, from the one constant in dates.js.
 
 import { todayISO, startOfWeek, endOfWeek, weekDates, daysLeftInWeek, withinRange, timeToMinutes } from './dates.js';
-import {
-  MUSCLE_GROUPS,
-  EQUIPMENT_TYPES,
-  REAL_EQUIPMENT,
-  STARTER_EXERCISES,
-  STARTER_ROUTINES,
-  makeExercise,
-  makeRoutine,
-} from './schema.js';
+import { MUSCLE_GROUPS, STARTER_EXERCISES, makeExercise } from './schema.js';
 
 // --- the library ------------------------------------------------------------
 
@@ -28,13 +21,13 @@ export function allExercises(state) {
   return [...(state?.exercises ?? [])].sort(byMuscleThenName);
 }
 
-/** What a session can pick from. Untried counts: trying it is the point. */
+/** What a session can pick from. */
 export function activeExercises(state) {
   return allExercises(state).filter((e) => e.status !== 'dropped');
 }
 
-export function exercisesByStatus(state, status) {
-  return allExercises(state).filter((e) => e.status === status);
+export function droppedExercises(state) {
+  return allExercises(state).filter((e) => e.status === 'dropped');
 }
 
 export function exerciseById(state, id) {
@@ -48,10 +41,6 @@ export function exerciseById(state, id) {
  */
 export function exerciseName(state, id) {
   return exerciseById(state, id)?.name ?? 'Removed exercise';
-}
-
-export function exerciseMuscle(state, id) {
-  return exerciseById(state, id)?.muscle ?? null;
 }
 
 /** Primary and secondary together, in canonical order, deduplicated. */
@@ -82,126 +71,13 @@ export function exerciseNameTaken(state, name, exceptId = null) {
   );
 }
 
-export function findExerciseByName(state, name) {
-  const wanted = String(name ?? '').trim().toLowerCase();
-  if (!wanted) return null;
-  return (state?.exercises ?? []).find((e) => String(e.name).trim().toLowerCase() === wanted) ?? null;
-}
-
-// --- equipment preference ---------------------------------------------------
-
-/**
- * What each kind of equipment is actually worth to me.
- *
- * The reason this view exists: cable and machine variants of a movement can
- * work where the free-weight variant does not, and without counting it that
- * gets rediscovered every few months. `droppedForPain` is separated from the
- * other drop reasons because it is the one that means something about the body
- * rather than about preference or the gym being busy.
- */
-export function equipmentPreference(state, { today = todayISO() } = {}) {
-  const rows = new Map(EQUIPMENT_TYPES.map((equipment) => [equipment, {
-    equipment,
-    total: 0,
-    active: 0,
-    untried: 0,
-    dropped: 0,
-    droppedForPain: 0,
-    droppedForDislike: 0,
-    droppedForAvailability: 0,
-    sets: 0,
-    sessions: new Set(),
-    lastUsed: null,
-    painReports: 0,
-  }]));
-
-  for (const exercise of state?.exercises ?? []) {
-    const row = rows.get(exercise.equipment) ?? rows.get('unspecified');
-    row.total += 1;
-    if (exercise.status === 'active') row.active += 1;
-    else if (exercise.status === 'untried') row.untried += 1;
-    else if (exercise.status === 'dropped') {
-      row.dropped += 1;
-      if (exercise.dropReason === 'pain') row.droppedForPain += 1;
-      else if (exercise.dropReason === 'disliked') row.droppedForDislike += 1;
-      else if (exercise.dropReason === 'unavailable') row.droppedForAvailability += 1;
-    }
-  }
-
-  for (const session of state?.gymSessions ?? []) {
-    for (const entry of session.exercises ?? []) {
-      const exercise = exerciseById(state, entry.exerciseId);
-      if (!exercise) continue;
-      const row = rows.get(exercise.equipment) ?? rows.get('unspecified');
-      row.sets += (entry.sets ?? []).length;
-      if ((entry.sets ?? []).length) {
-        row.sessions.add(session.id);
-        if (!row.lastUsed || session.date > row.lastUsed) row.lastUsed = session.date;
-      }
-    }
-  }
-
-  for (const record of state?.painRecords ?? []) {
-    const exercise = exerciseById(state, record.exerciseId);
-    if (!exercise) continue;
-    const row = rows.get(exercise.equipment) ?? rows.get('unspecified');
-    row.painReports += 1;
-  }
-
-  const totalSets = [...rows.values()].reduce((sum, row) => sum + row.sets, 0);
-  return [...rows.values()]
-    .map((row) => ({
-      ...row,
-      sessions: row.sessions.size,
-      shareOfSets: totalSets ? row.sets / totalSets : 0,
-      // Kept > 0 and nothing dropped for pain is the shape worth noticing.
-      keepRate: row.total ? row.active / row.total : 0,
-    }))
-    .filter((row) => row.total || row.sets)
-    .sort((a, b) => b.sets - a.sets || b.total - a.total);
-}
-
-// --- routines ---------------------------------------------------------------
-
-export function routines(state) {
-  return [...(state?.routines ?? [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-}
-
-export function routineById(state, id) {
-  return (state?.routines ?? []).find((r) => r.id === id) ?? null;
-}
-
-export function routineName(state, id) {
-  return routineById(state, id)?.name ?? null;
-}
-
-/**
- * Which slot is due next: the one after the last session that named a slot.
- * An A/B rotation is the whole point, and deviating from it stays free — this
- * only decides what the form offers first.
- */
-export function nextRoutine(state) {
-  const list = routines(state);
-  if (!list.length) return null;
-  const last = sessions(state).find((s) => s.routineId && routineById(state, s.routineId));
-  if (!last) return list[0];
-  const index = list.findIndex((r) => r.id === last.routineId);
-  if (index < 0) return list[0];
-  return list[(index + 1) % list.length];
-}
-
+/** Seeded on first use so a session can be logged without typing a library first. */
 export function seedLibrary(state) {
-  let added = 0;
-  if (Array.isArray(state.exercises) && !state.exercises.length) {
-    for (const [name, muscle, secondary, equipment] of STARTER_EXERCISES) {
-      state.exercises.push(makeExercise({ name, muscle, secondary, equipment }));
-      added += 1;
-    }
+  if (!Array.isArray(state.exercises) || state.exercises.length) return 0;
+  for (const [name, muscle, secondary] of STARTER_EXERCISES) {
+    state.exercises.push(makeExercise({ name, muscle, secondary }));
   }
-  if (Array.isArray(state.routines) && !state.routines.length) {
-    for (const routine of STARTER_ROUTINES) state.routines.push(makeRoutine(routine));
-  }
-  return added;
+  return state.exercises.length;
 }
 
 // --- sessions ---------------------------------------------------------------
@@ -234,12 +110,12 @@ export function setVolume(set) {
   return num(set?.reps) * num(set?.weight);
 }
 
-/** Clock times if both are there, otherwise whatever was recorded by hand. */
+/** How long it took, when both clock times are there. */
 export function sessionMinutes(session) {
   const start = timeToMinutes(session?.startTime);
   const end = timeToMinutes(session?.endTime);
-  if (start !== null && end !== null && end > start) return end - start;
-  return num(session?.durationMinutes) || 0;
+  if (start === null || end === null || end <= start) return 0;
+  return end - start;
 }
 
 export function sessionTotals(session) {
@@ -255,7 +131,6 @@ export function sessionTotals(session) {
   }
   return {
     exercises: (session?.exercises ?? []).length,
-    skipped: (session?.skipped ?? []).length,
     sets,
     reps,
     volume,
@@ -263,7 +138,7 @@ export function sessionTotals(session) {
   };
 }
 
-/** Every group a session touched, primary and secondary. */
+/** Every group a session touched, primary and secondary, for the history row. */
 export function sessionMuscles(state, session) {
   const seen = new Set();
   for (const entry of session?.exercises ?? []) {
@@ -280,6 +155,7 @@ export function weeklyTarget(state) {
   return Number.isFinite(target) && target > 0 ? Math.round(target) : 0;
 }
 
+/** Sessions this week, and how much week is left. */
 export function weekProgress(state, iso = todayISO()) {
   const done = sessionsInWeek(state, iso).length;
   const target = weeklyTarget(state);
@@ -288,97 +164,20 @@ export function weekProgress(state, iso = todayISO()) {
     weekEnd: endOfWeek(iso),
     done,
     target,
+    // Going over target is not a debt.
     remaining: Math.max(0, target - done),
     daysLeft: daysLeftInWeek(iso),
     met: target > 0 && done >= target,
   };
 }
 
-/**
- * What the week has trained and what it has not. The gaps are the output: an
- * untrained group with days left is what today's session should be.
- *
- * A secondary muscle counts, but is tallied apart from primary work, because
- * "back got hit as a secondary on three pressing days" is not a back day.
- */
-export function muscleCoverage(state, iso = todayISO()) {
-  const week = sessionsInWeek(state, iso);
-  const tally = new Map(MUSCLE_GROUPS.map((m) => [m, { primarySets: 0, secondarySets: 0, sessions: new Set() }]));
-
-  for (const session of week) {
-    for (const entry of session.exercises ?? []) {
-      const count = (entry.sets ?? []).length;
-      if (!count) continue;
-      const exercise = exerciseById(state, entry.exerciseId);
-      if (!exercise) continue;
-      const primary = tally.get(exercise.muscle);
-      if (primary) {
-        primary.primarySets += count;
-        primary.sessions.add(session.id);
-      }
-      for (const muscle of exercise.secondary ?? []) {
-        const row = tally.get(muscle);
-        if (row) {
-          row.secondarySets += count;
-          row.sessions.add(session.id);
-        }
-      }
-    }
+export function weekDaySessions(state, iso = todayISO()) {
+  const byDate = new Map();
+  for (const session of sessionsInWeek(state, iso)) {
+    if (!byDate.has(session.date)) byDate.set(session.date, []);
+    byDate.get(session.date).push(session);
   }
-
-  const last = lastTrainedByMuscle(state);
-  return MUSCLE_GROUPS.map((muscle) => {
-    const row = tally.get(muscle);
-    return {
-      muscle,
-      primarySets: row.primarySets,
-      secondarySets: row.secondarySets,
-      sets: row.primarySets + row.secondarySets,
-      sessions: row.sessions.size,
-      trained: row.primarySets > 0,
-      touched: row.primarySets + row.secondarySets > 0,
-      lastTrained: last.get(muscle) ?? null,
-    };
-  });
-}
-
-export function lastTrainedByMuscle(state) {
-  const last = new Map();
-  for (const session of sessions(state)) {
-    for (const entry of session.exercises ?? []) {
-      if (!(entry.sets ?? []).length) continue;
-      const exercise = exerciseById(state, entry.exerciseId);
-      if (!exercise) continue;
-      if (!last.has(exercise.muscle)) last.set(exercise.muscle, session.date);
-    }
-  }
-  return last;
-}
-
-/**
- * Muscle groups with nothing usable left to train them with — every exercise
- * dropped, or never tried. This is the report that turns a slow drift into a
- * visible hole before a whole group quietly stops being trained.
- */
-export function gapReport(state) {
-  const gaps = [];
-  for (const muscle of MUSCLE_GROUPS) {
-    const forMuscle = (state?.exercises ?? []).filter((e) => e.muscle === muscle);
-    const active = forMuscle.filter((e) => e.status === 'active');
-    const untried = forMuscle.filter((e) => e.status === 'untried');
-    const dropped = forMuscle.filter((e) => e.status === 'dropped');
-    if (active.length) continue;
-    gaps.push({
-      muscle,
-      total: forMuscle.length,
-      untried,
-      dropped,
-      droppedForPain: dropped.filter((e) => e.dropReason === 'pain').length,
-      // Nothing at all is a different problem from "everything I had, I stopped".
-      reason: forMuscle.length === 0 ? 'nothing in the library' : untried.length ? 'only untried options' : 'everything dropped',
-    });
-  }
-  return gaps;
+  return weekDates(startOfWeek(iso)).map((date) => ({ date, sessions: byDate.get(date) ?? [] }));
 }
 
 // --- progression ------------------------------------------------------------
@@ -404,6 +203,7 @@ export function exerciseProgression(state, exerciseId) {
     for (const set of sets) {
       reps += num(set.reps);
       volume += setVolume(set);
+      // Heaviest wins; at equal weight, the one with more reps.
       if (!top || num(set.weight) > num(top.weight) ||
         (num(set.weight) === num(top.weight) && num(set.reps) > num(top.reps))) {
         top = set;
@@ -444,15 +244,6 @@ export function trainedExerciseIds(state) {
     }
   }
   return [...seen];
-}
-
-export function weekDaySessions(state, iso = todayISO()) {
-  const byDate = new Map();
-  for (const session of sessionsInWeek(state, iso)) {
-    if (!byDate.has(session.date)) byDate.set(session.date, []);
-    byDate.get(session.date).push(session);
-  }
-  return weekDates(startOfWeek(iso)).map((date) => ({ date, sessions: byDate.get(date) ?? [] }));
 }
 
 // --- pain -------------------------------------------------------------------
@@ -552,4 +343,4 @@ export function painTableMarkdown(state) {
   ].join('\n');
 }
 
-export { MUSCLE_GROUPS, EQUIPMENT_TYPES, REAL_EQUIPMENT };
+export { MUSCLE_GROUPS };

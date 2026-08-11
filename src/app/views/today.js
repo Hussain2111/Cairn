@@ -9,7 +9,7 @@ import { pageHead, dueTag } from './shared.js';
 import { upNext, actionableDueTasks, stalledThreads } from '../../core/threads.js';
 import { reviewQueue } from '../../core/srs.js';
 import { needsAction, describeReason } from '../../core/pipelines.js';
-import { weekProgress, muscleCoverage, sessionsInWeek } from '../../core/gym.js';
+import { weekProgress, sessionsInWeek } from '../../core/gym.js';
 import { activityLabel } from '../../core/activities.js';
 import { blocksForDate, plannedMinutes, loggedMinutes, isLogged } from '../../core/timeblocks.js';
 import { formatLongDate, formatDuration, nowStamp } from '../../core/dates.js';
@@ -250,12 +250,8 @@ function blockRow(ctx, block) {
   ]);
 }
 
-/**
- * The gym on Today is one line: how the week stands, and which groups have had
- * nothing. That second half is what makes it actionable rather than a score.
- */
+/** The gym on Today is one line: how the week stands. */
 function gymRow(ctx, gym, today) {
-  const untrained = muscleCoverage(ctx.state, today).filter((row) => !row.trained);
   const loggedToday = sessionsInWeek(ctx.state, today).some((session) => session.date === today);
 
   return el('div.card', [
@@ -270,9 +266,11 @@ function gymRow(ctx, gym, today) {
         el('a.btn.btn--sm', { href: '#/gym', text: 'Open the gym' }),
       ]),
       el('p.muted', {
-        text: untrained.length
-          ? `No direct work this week: ${untrained.map((row) => row.muscle).join(', ')}.`
-          : 'Every muscle group has had direct work this week.',
+        text: gym.remaining
+          ? `${gym.remaining} more to hit the target, with ${gym.daysLeft} day(s) left.`
+          : gym.target
+            ? 'The week has hit its target.'
+            : 'No weekly target set.',
       }),
     ]),
   ]);

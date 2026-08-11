@@ -141,7 +141,7 @@ test('the review flags stalled threads', () => {
   assert.deepEqual(report.stalled.map((t) => t.thread.name), ['GRE prep']);
 });
 
-test('gym progress for the week is included, with the groups it missed', () => {
+test('gym progress for the week is included, with the sessions it counted', () => {
   const state = fixture();
   const bench = makeExercise({ name: 'Bench press', muscle: 'chest' });
   state.exercises.push(bench);
@@ -156,8 +156,12 @@ test('gym progress for the week is included, with the groups it missed', () => {
   assert.equal(report.gym.done, 2);
   assert.equal(report.gym.target, 2);
   assert.equal(report.gym.met, true);
-  assert.equal(report.gym.untrained.includes('chest'), false);
-  assert.equal(report.gym.untrained.includes('legs'), true, 'the gaps are the useful half');
+  // The review reports what was lifted, not which muscle groups were missed —
+  // coverage was a monthly reflection, not a weekly one.
+  assert.equal(report.gym.sessions.length, 2);
+  assert.deepEqual(report.gym.sessions.map((s) => s.session.date), ['2026-08-05', '2026-08-03']);
+  assert.equal(report.gym.sessions[0].totals.sets, 1);
+  assert.equal(report.gym.sessions[0].totals.reps, 10);
 });
 
 test('the markdown export carries the substance of the report', () => {

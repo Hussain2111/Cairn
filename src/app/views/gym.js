@@ -1,25 +1,19 @@
 // The gym.
 //
-// Five pages behind one tab. The overview answers "what should today be", the
-// library is the set of movements I actually maintain, pain is its own record
-// because a paragraph cannot be grouped, history is the log, and the importer
-// is a one-time path for the markdown logbook this replaces.
+// Four pages, one per thing the tab is for: how the week is going and whether a
+// lift is moving, the library it draws from, pain grouped by where it hurt, and
+// the log itself.
 
-import { el, tag, empty, confirm, meter, select, toast, input, downloadFile, copyText } from '../ui.js';
+import { el, tag, empty, confirm, meter, select, toast, downloadFile, copyText } from '../ui.js';
 import { pageHead, statTile, editRecord } from './shared.js';
 import {
   allExercises,
   activeExercises,
-  exercisesByStatus,
-  exerciseById,
+  droppedExercises,
   exerciseName,
   exerciseUsage,
   exerciseNameTaken,
-  equipmentPreference,
   weekProgress,
-  weeklyTarget,
-  muscleCoverage,
-  gapReport,
   sessions,
   sessionsInWeek,
   sessionTotals,
@@ -28,27 +22,15 @@ import {
   exerciseProgression,
   trainedExerciseIds,
   weekDaySessions,
-  routines,
-  routineName,
-  nextRoutine,
   painByLocation,
   painRecords,
   painTableCsv,
   painTableMarkdown,
   seedLibrary,
 } from '../../core/gym.js';
-import {
-  makeExercise,
-  makePainRecord,
-  MUSCLE_GROUPS,
-  EQUIPMENT_TYPES,
-  EXERCISE_STATUSES,
-  DROP_REASONS,
-  PAIN_TIMING,
-} from '../../core/schema.js';
-import { formatDate, formatDuration, relativeDay, diffDays, weekdayInitials, todayISO } from '../../core/dates.js';
+import { makeExercise, makePainRecord, MUSCLE_GROUPS, EXERCISE_STATUSES, PAIN_TIMING } from '../../core/schema.js';
+import { formatDate, formatDuration, relativeDay, weekdayInitials, todayISO } from '../../core/dates.js';
 import { openSessionDialog } from './gym-session.js';
-import { openLogbookImport } from './gym-import.js';
 
 const TABS = [
   ['', 'Overview'],
@@ -59,7 +41,8 @@ const TABS = [
 
 export function title(ctx) {
   const tab = ctx.route.params[0] ?? '';
-  return TABS.find(([slug]) => slug === tab)?.[1] ? `Gym — ${TABS.find(([slug]) => slug === tab)[1]}` : 'Gym';
+  const label = TABS.find(([slug]) => slug === tab)?.[1];
+  return label && label !== 'Overview' ? `Gym — ${label}` : 'Gym';
 }
 
 export function render(ctx) {
@@ -72,17 +55,12 @@ export function render(ctx) {
 
   return el('div', [
     pageHead('Gym', {
-      sub: 'Sessions, not check-marks. Weeks run Sunday to Saturday.',
+      sub: 'Sets, reps, weight and how it felt. Weeks run Sunday to Saturday.',
       actions: [
         el('button.btn.btn--primary', {
           type: 'button',
           text: 'Log a session',
           onclick: () => openSessionDialog(ctx),
-        }),
-        el('button.btn', {
-          type: 'button',
-          text: 'Import logbook',
-          onclick: () => openLogbookImport(ctx),
         }),
       ],
     }),
@@ -93,84 +71,6 @@ export function render(ctx) {
         'aria-current': slug === tab ? 'page' : null,
       }))),
     body,
-  ]);
-}
-
-// --- overview ---------------------------------------------------------------
-
-function renderOverview(ctx) {
-  const progress = weekProgress(ctx.state, ctx.today);
-  const coverage = muscleCoverage(ctx.state, ctx.today);
-  const untrained = coverage.filter((row) => !row.trained);
-  const gaps = gapReport(ctx.state);
-  const next = nextRoutine(ctx.state);
-  const library = allExercises(ctx.state);
-
-  if (!library.length && !sessions(ctx.state).length) {
-    return empty(
-      'Nothing set up yet',
-      'The gym is the one thing here tracked by session rather than by tick, because whether you went is not the useful part. Start with a library of movements, or paste in the logbook you already keep.',
-      el('div.row', [
-        el('button.btn.btn--primary', {
-          type: 'button',
-          text: 'Add the starter library',
-          onclick: () => {
-            const added = ctx.commit('seed gym library', (state) => seedLibrary(state));
-            toast(`${added} exercises and an A/B rotation added. Rename, re-tag or drop whatever does not match your gym.`);
-          },
-        }),
-        el('button.btn', { type: 'button', text: 'Import my logbook', onclick: () => openLogbookImport(ctx) }),
-      ]),
-    );
-  }
-
-  return el('div.stack', [
-    section('This week', `${formatDate(progress.weekStart)} – ${formatDate(progress.weekEnd)}`, [
-      el('div.grid.grid--4', [
-        statTile(progress.done, 'sessions done', progress.met ? 'teal' : ''),
-        statTile(progress.target || '—', 'target'),
-        statTile(progress.remaining, 'still to do', progress.remaining && progress.daysLeft < progress.remaining ? 'amber' : ''),
-        statTile(progress.daysLeft, progress.daysLeft === 1 ? 'day left' : 'days left'),
-      ]),
-      progress.target
-        ? meter(progress.done / progress.target, progress.met ? 'complete' : '')
-        : el('p.field__hint', { text: 'No weekly target set. Settings › Gym.' }),
-      progress.remaining && progress.daysLeft < progress.remaining
-        ? el('p.field__hint', {
-            text: `${progress.remaining} session(s) left with ${progress.daysLeft} day(s) to go — this week falls short unless you double up.`,
-          })
-        : null,
-      weekStrip(ctx),
-      next
-        ? el('div.row', [
-            el('span.field__hint', { text: 'Next in the rotation:' }),
-            tag(next.name, 'teal'),
-            el('button.btn.btn--sm', {
-              type: 'button',
-              text: `Log ${next.name}`,
-              onclick: () => openSessionDialog(ctx),
-            }),
-          ])
-        : null,
-    ]),
-
-    section('Muscle coverage', 'this week', [
-      coverageStrip(coverage, ctx.today),
-      el('p.field__hint', {
-        text: untrained.length
-          ? `${untrained.map((row) => row.muscle).join(', ')} ${untrained.length === 1 ? 'has' : 'have'} had no direct work this week. That is what today's session is for.`
-          : 'Every group has had direct work this week.',
-      }),
-      el('p.field__hint', {
-        text: 'The big number is direct sets. A group only counts as trained when it was the primary target — three pressing days do not make a back day.',
-      }),
-    ]),
-
-    gaps.length ? section('Gaps in the library', `${gaps.length}`, [gapPanel(ctx, gaps)]) : null,
-
-    section('Equipment', 'what actually works', [equipmentPanel(ctx)]),
-
-    section('Progression', 'one exercise over time', [progressionPanel(ctx)]),
   ]);
 }
 
@@ -185,6 +85,43 @@ function section(heading, meta, children) {
   ]);
 }
 
+// --- overview ---------------------------------------------------------------
+
+function renderOverview(ctx) {
+  const progress = weekProgress(ctx.state, ctx.today);
+  const library = allExercises(ctx.state);
+
+  if (!library.length && !sessions(ctx.state).length) {
+    return empty(
+      'Nothing set up yet',
+      'Start with a library of movements, then log sessions against it. Sets, reps, weight and one line about how each exercise felt — that is the whole model.',
+      el('button.btn.btn--primary', {
+        type: 'button',
+        text: 'Add the starter library',
+        onclick: () => {
+          const added = ctx.commit('seed gym library', (state) => seedLibrary(state));
+          toast(`${added} exercises added. Rename, re-tag or drop whatever does not match your gym.`);
+        },
+      }),
+    );
+  }
+
+  return el('div.stack', [
+    section('This week', `${formatDate(progress.weekStart)} – ${formatDate(progress.weekEnd)}`, [
+      el('div.grid.grid--4', [
+        statTile(progress.done, 'sessions', progress.met ? 'teal' : ''),
+        statTile(progress.target || '—', 'target'),
+        statTile(progress.remaining, 'still to do', progress.remaining && progress.daysLeft < progress.remaining ? 'amber' : ''),
+        statTile(progress.daysLeft, progress.daysLeft === 1 ? 'day left' : 'days left'),
+      ]),
+      progress.target ? meter(progress.done / progress.target, progress.met ? 'complete' : '') : null,
+      weekStrip(ctx),
+    ]),
+
+    section('Progression', 'one exercise over time', [progressionPanel(ctx)]),
+  ]);
+}
+
 function weekStrip(ctx) {
   const labels = weekdayInitials();
   return el('div.week-strip', weekDaySessions(ctx.state, ctx.today).map((day, i) =>
@@ -196,101 +133,8 @@ function weekStrip(ctx) {
     ])));
 }
 
-/**
- * The view that decides what today should be. Untrained groups carry the amber
- * signal because they are the ones that need reading; a trained group is
- * settled, and settled things recede.
- */
-function coverageStrip(coverage, today) {
-  return el('div.muscles', coverage.map((entry) => {
-    const gap = entry.lastTrained ? -(diffDays(today, entry.lastTrained) ?? 0) : null;
-    return el('div.muscle' + (entry.trained ? '.muscle--trained' : ''), {
-      title: entry.trained
-        ? `${entry.muscle}: ${entry.primarySets} direct set(s)${entry.secondarySets ? `, ${entry.secondarySets} as a secondary` : ''} across ${entry.sessions} session(s)`
-        : entry.lastTrained
-          ? `${entry.muscle}: no direct work this week — last trained ${formatDate(entry.lastTrained)}`
-          : `${entry.muscle}: never trained`,
-      dataset: { muscle: entry.muscle, trained: String(entry.trained) },
-    }, [
-      el('div.muscle__name', { text: entry.muscle }),
-      el('div.muscle__count.mono', { text: entry.trained ? String(entry.primarySets) : '—' }),
-      el('div.muscle__when.faint', {
-        text: entry.trained
-          ? (entry.secondarySets ? `+${entry.secondarySets} indirect` : 'this week')
-          : gap === null ? 'never' : `${gap}d ago`,
-      }),
-    ]);
-  }));
-}
-
-function gapPanel(ctx, gaps) {
-  return el('div.card', [
-    el('div.card__body.stack--tight.stack', [
-      el('p.field__hint', {
-        text: 'Muscle groups with no active exercise left. A group whose only options are dropped or untried stops being trained without anything ever announcing it.',
-      }),
-      ...gaps.map((gap) =>
-        el('div.row.row--between', [
-          el('div.row', [
-            tag(gap.muscle, 'amber'),
-            el('span.section__meta', { text: gap.reason }),
-            gap.droppedForPain ? tag(`${gap.droppedForPain} dropped for pain`, 'danger') : null,
-          ]),
-          el('div.row', [
-            ...gap.untried.slice(0, 3).map((e) => tag(`${e.name} — untried`)),
-            el('a.btn.btn--ghost.btn--sm', { href: '#/gym/library', text: 'Library' }),
-          ]),
-        ])),
-    ]),
-  ]);
-}
-
-/**
- * Preference by equipment. The point of the field: cable and machine variants
- * can work where the free-weight version does not, and counting it beats
- * rediscovering it.
- */
-function equipmentPanel(ctx) {
-  const rows = equipmentPreference(ctx.state, { today: ctx.today });
-  if (!rows.length) {
-    return el('p.field__hint', { text: 'Nothing in the library yet.' });
-  }
-  const peak = Math.max(...rows.map((row) => row.sets), 1);
-
-  return el('div.card', [
-    el('div.card__body.stack--tight.stack', [
-      ...rows.map((row) =>
-        el('div.dist', { dataset: { equipment: row.equipment } }, [
-          el('div.truncate', { text: row.equipment }),
-          el('div.dist__bars', [
-            el('div.dist__bar', [
-              el('div.dist__fill.dist__fill--actual', { style: { width: `${(row.sets / peak) * 100}%` } }),
-            ]),
-            el('div.row', [
-              row.active ? tag(`${row.active} active`, 'teal') : null,
-              row.untried ? tag(`${row.untried} untried`) : null,
-              row.droppedForPain ? tag(`${row.droppedForPain} dropped: pain`, 'danger') : null,
-              row.droppedForDislike ? tag(`${row.droppedForDislike} dropped: disliked`, 'amber') : null,
-              row.droppedForAvailability ? tag(`${row.droppedForAvailability} dropped: unavailable`) : null,
-            ]),
-          ]),
-          el('div.mono', { text: `${row.sets} sets`, title: `${Math.round(row.shareOfSets * 100)}% of all sets` }),
-        ])),
-      el('p.field__hint', {
-        text: 'Sets done, and what happened to the exercises. A kind of equipment you keep and never drop for pain is one that works for you — that is worth seeing rather than remembering.',
-      }),
-      rows.some((row) => row.equipment === 'unspecified' && row.total)
-        ? el('p.field__hint', {
-            text: 'Some exercises do not say what equipment they use, so they cannot be compared. The library flags them.',
-          })
-        : null,
-    ]),
-  ]);
-}
-
 function progressionPanel(ctx) {
-  const ids = trainedExerciseIds(ctx.state);
-  const options = ids
+  const options = trainedExerciseIds(ctx.state)
     .map((id) => ({ id, name: exerciseName(ctx.state, id) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -314,9 +158,8 @@ function progressionPanel(ctx) {
     const bodyweight = points.every((point) => point.bodyweight);
     const value = (point) => (bodyweight ? point.topReps : point.topWeight);
     const peak = Math.max(...points.map(value), 1);
-    const first = points[0];
+    const delta = value(points[points.length - 1]) - value(points[0]);
     const last = points[points.length - 1];
-    const delta = value(last) - value(first);
     const unit = bodyweight ? 'reps' : 'kg';
 
     chart.appendChild(
@@ -356,10 +199,8 @@ function progressionPanel(ctx) {
 // --- library ----------------------------------------------------------------
 
 function renderLibrary(ctx) {
-  const active = exercisesByStatus(ctx.state, 'active');
-  const untried = exercisesByStatus(ctx.state, 'untried');
-  const dropped = exercisesByStatus(ctx.state, 'dropped');
-  const unspecified = allExercises(ctx.state).filter((e) => e.equipment === 'unspecified');
+  const active = activeExercises(ctx.state);
+  const dropped = droppedExercises(ctx.state);
 
   return el('div.stack', [
     el('div.row', [
@@ -374,22 +215,9 @@ function renderLibrary(ctx) {
               toast(`${added} exercises added.`);
             },
           }),
-      routinePanelButton(ctx),
     ]),
 
-    unspecified.length
-      ? el('div.banner.banner--warn', [
-          el('div.banner__body', [
-            el('div.banner__title', { text: `${unspecified.length} exercise(s) do not say what equipment they use` }),
-            el('div.banner__text', {
-              text: `${unspecified.map((e) => e.name).slice(0, 6).join(', ')}${unspecified.length > 6 ? '…' : ''} — equipment is what makes the cable-versus-free-weight comparison possible, so these are left out of it until they say.`,
-            }),
-          ]),
-        ])
-      : null,
-
     libraryGroup(ctx, 'Active', active, 'What a session picks from.'),
-    libraryGroup(ctx, 'Untried', untried, 'In the library, never done. Logging one moves it to active.'),
     libraryGroup(ctx, 'Dropped', dropped, 'Out of the picker, still in every session that used them.'),
   ]);
 }
@@ -406,19 +234,10 @@ function libraryGroup(ctx, heading, list, hint) {
 function exerciseRow(ctx, exercise) {
   const usage = exerciseUsage(ctx.state, exercise.id);
   return el('div.row.row--between.exercise-row', { dataset: { status: exercise.status } }, [
-    el('div.stack--tight.stack', [
-      el('div.row', [
-        el('strong.break', { text: exercise.name }),
-        tag(exercise.muscle, 'teal'),
-        ...(exercise.secondary ?? []).map((m) => tag(m)),
-        tag(exercise.equipment, exercise.equipment === 'unspecified' ? 'amber' : ''),
-        exercise.status === 'dropped' && exercise.dropReason
-          ? tag(`dropped: ${exercise.dropReason}`, exercise.dropReason === 'pain' ? 'danger' : 'locked')
-          : null,
-        exercise.status === 'dropped' && !exercise.dropReason ? tag('dropped: no reason given', 'amber') : null,
-      ]),
-      exercise.cues ? el('div.cues.break', { text: exercise.cues }) : null,
-      exercise.dropNote ? el('div.section__meta.break', { text: exercise.dropNote }) : null,
+    el('div.row', [
+      el('strong.break', { text: exercise.name }),
+      tag(exercise.muscle, 'teal'),
+      ...(exercise.secondary ?? []).map((m) => tag(m)),
       el('span.section__meta', {
         text: usage.sessions ? `${usage.sets} sets across ${usage.sessions} session(s)` : 'never used',
       }),
@@ -430,56 +249,16 @@ function exerciseRow(ctx, exercise) {
         'aria-label': `Edit ${exercise.name}`,
         onclick: () => editExercise(ctx, exercise),
       }),
-      exercise.status === 'dropped'
-        ? el('button.btn.btn--ghost.btn--sm', {
-            type: 'button',
-            text: 'Bring back',
-            'aria-label': `Bring back ${exercise.name}`,
-            onclick: () => ctx.commit('restore exercise', () => {
-              exercise.status = 'active';
-              exercise.dropReason = null;
-              exercise.dropNote = '';
-            }, { undoable: false }),
-          })
-        : el('button.btn.btn--ghost.btn--sm', {
-            type: 'button',
-            text: 'Drop',
-            'aria-label': `Drop ${exercise.name}`,
-            onclick: () => dropExercise(ctx, exercise),
-          }),
+      el('button.btn.btn--ghost.btn--sm', {
+        type: 'button',
+        text: exercise.status === 'dropped' ? 'Bring back' : 'Drop',
+        'aria-label': `${exercise.status === 'dropped' ? 'Bring back' : 'Drop'} ${exercise.name}`,
+        onclick: () => ctx.commit(exercise.status === 'dropped' ? 'restore exercise' : 'drop exercise', () => {
+          exercise.status = exercise.status === 'dropped' ? 'active' : 'dropped';
+        }, { undoable: false }),
+      }),
     ]),
   ]);
-}
-
-async function dropExercise(ctx, exercise) {
-  const reason = select(DROP_REASONS, 'disliked', { 'aria-label': 'Why it is being dropped' });
-  const note = input({ placeholder: 'Optional detail', 'aria-label': 'Drop note' });
-
-  const values = await ctx.openDialog({
-    title: `Drop ${exercise.name}`,
-    body: el('div.stack', [
-      el('label.field', [el('span.field__label', { text: 'Why' }), reason]),
-      el('label.field', [el('span.field__label', { text: 'Note' }), note]),
-      el('p.field__hint', {
-        text: 'Disliked, painful and unavailable are three different problems. Which one it was decides whether to find a variant, see someone about it, or change gym — so they are never collapsed into one "retired".',
-      }),
-    ]),
-    footer: (close) => [
-      el('button.btn', { type: 'button', text: 'Cancel', onclick: () => close(null) }),
-      el('button.btn.btn--danger', {
-        type: 'button',
-        text: 'Drop it',
-        onclick: () => close({ reason: reason.value, note: note.value.trim() }),
-      }),
-    ],
-  });
-  if (!values) return;
-
-  ctx.commit('drop exercise', () => {
-    exercise.status = 'dropped';
-    exercise.dropReason = values.reason;
-    exercise.dropNote = values.note;
-  }, { undoable: false });
 }
 
 async function editExercise(ctx, exercise) {
@@ -488,45 +267,16 @@ async function editExercise(ctx, exercise) {
     title: isNew ? 'Add an exercise' : 'Exercise',
     submitLabel: isNew ? 'Add' : 'Save',
     deletable: !isNew,
-    wide: true,
     fields: [
       { key: 'name', label: 'Name', required: true, placeholder: 'e.g. Seated cable row' },
-      {
-        key: 'muscle',
-        label: 'Primary muscle',
-        type: 'select',
-        options: MUSCLE_GROUPS,
-        default: 'chest',
-        hint: 'What the weekly coverage counts as direct work.',
-      },
+      { key: 'muscle', label: 'Primary muscle', type: 'select', options: MUSCLE_GROUPS, default: 'chest' },
       {
         key: 'secondary',
         label: 'Secondary muscles',
         placeholder: 'e.g. arms, core',
-        hint: 'Comma-separated. Counted, but separately — assistance is not a training day.',
+        hint: 'Comma-separated. Optional.',
       },
-      {
-        key: 'equipment',
-        label: 'Equipment',
-        type: 'select',
-        options: EQUIPMENT_TYPES,
-        default: 'unspecified',
-        hint: 'Cable, machine and Smith variants behave differently from free weights. Recording which is which is what makes that visible.',
-      },
-      {
-        key: 'status',
-        label: 'Status',
-        type: 'select',
-        options: EXERCISE_STATUSES,
-        default: 'active',
-      },
-      {
-        key: 'cues',
-        label: 'Cues',
-        type: 'textarea',
-        rows: 3,
-        hint: 'Coaching notes. These appear automatically when you log this exercise, which is the only moment they help.',
-      },
+      { key: 'status', label: 'Status', type: 'select', options: EXERCISE_STATUSES, default: 'active' },
     ],
     values: exercise ? { ...exercise, secondary: (exercise.secondary ?? []).join(', ') } : {},
   });
@@ -535,14 +285,16 @@ async function editExercise(ctx, exercise) {
   if (values.__delete) {
     const usage = exerciseUsage(ctx.state, exercise.id);
     if (usage.sessions) {
+      // Deleting would leave those sets labelled "Removed exercise". Dropping
+      // does the same job to the picker and leaves the history intact.
       const answer = await confirm({
         title: 'Drop it instead',
-        message: `"${exercise.name}" appears in ${usage.sessions} session(s). Deleting it would leave those sets labelled "Removed exercise". Dropping takes it out of the picker and leaves the history intact.`,
+        message: `"${exercise.name}" appears in ${usage.sessions} session(s). Deleting it would leave those sets labelled "Removed exercise". Dropping takes it out of the picker and leaves the history exactly as it is.`,
         confirmLabel: 'Drop it',
         danger: false,
       });
       if (answer !== 'confirm') return;
-      await dropExercise(ctx, exercise);
+      ctx.commit('drop exercise', () => { exercise.status = 'dropped'; }, { undoable: false });
       return;
     }
     const answer = await confirm({
@@ -574,9 +326,7 @@ async function editExercise(ctx, exercise) {
         name: values.name,
         muscle: values.muscle,
         secondary,
-        equipment: values.equipment,
         status: values.status,
-        cues: values.cues,
       }));
     }, { undoable: false });
     return;
@@ -588,62 +338,9 @@ async function editExercise(ctx, exercise) {
       name: values.name,
       muscle: values.muscle,
       secondary,
-      equipment: values.equipment,
       status: values.status,
-      cues: values.cues,
     });
-    if (exercise.status !== 'dropped') {
-      exercise.dropReason = null;
-      exercise.dropNote = '';
-    }
   }, { undoable: false });
-}
-
-function routinePanelButton(ctx) {
-  return el('button.btn.btn--ghost', {
-    type: 'button',
-    text: 'Rotation',
-    onclick: () => editRoutines(ctx),
-  });
-}
-
-async function editRoutines(ctx) {
-  const list = routines(ctx.state);
-  await ctx.openDialog({
-    title: 'The rotation',
-    wide: true,
-    body: el('div.stack', [
-      el('p.field__hint', {
-        text: 'Slots run in order and repeat. The app offers the next one when you log a session; deviating from it costs nothing and changes nothing.',
-      }),
-      list.length
-        ? el('div.stack--tight.stack', list.map((routine, index) =>
-            el('div.row.row--between', [
-              el('div.row', [
-                el('span.mono.faint', { text: String(index + 1).padStart(2, '0') }),
-                el('strong', { text: routine.name }),
-                nextRoutine(ctx.state)?.id === routine.id ? tag('next', 'teal') : null,
-              ]),
-              el('button.btn.btn--ghost.btn--sm', {
-                type: 'button',
-                text: 'Rename',
-                'aria-label': `Rename ${routine.name}`,
-                onclick: async () => {
-                  const values = await editRecord({
-                    title: 'Rename the slot',
-                    fields: [{ key: 'name', label: 'Name', required: true }],
-                    values: routine,
-                  });
-                  if (values && !values.__delete) {
-                    ctx.commit('rename slot', () => { routine.name = values.name; }, { undoable: false });
-                  }
-                },
-              }),
-            ])))
-        : el('p.muted', { text: 'No slots yet.' }),
-    ]),
-    footer: (close) => [el('button.btn', { type: 'button', text: 'Close', onclick: () => close() })],
-  });
 }
 
 // --- pain -------------------------------------------------------------------
@@ -819,7 +516,7 @@ function renderHistory(ctx) {
 
   return el('div.stack', [
     el('p.field__hint', {
-      text: `${list.length} session${list.length === 1 ? '' : 's'}, newest first. Sessions this week: ${sessionsInWeek(ctx.state, ctx.today).length}.`,
+      text: `${list.length} session${list.length === 1 ? '' : 's'}, newest first. This week: ${sessionsInWeek(ctx.state, ctx.today).length}.`,
     }),
     ...list.slice(0, 60).map((session) => sessionCard(ctx, session)),
     list.length > 60 ? el('p.muted', { text: `…and ${list.length - 60} older sessions.` }) : null,
@@ -829,7 +526,6 @@ function renderHistory(ctx) {
 function sessionCard(ctx, session) {
   const totals = sessionTotals(session);
   const muscles = sessionMuscles(ctx.state, session);
-  const slot = routineName(ctx.state, session.routineId);
 
   return el('div.card.session', [
     el('div.card__body.stack--tight.stack', [
@@ -837,14 +533,10 @@ function sessionCard(ctx, session) {
         el('div.row', [
           el('strong.mono', { text: formatDate(session.date, { weekday: true }) }),
           el('span.section__meta', { text: relativeDay(session.date, ctx.today) }),
-          slot ? tag(slot, 'teal') : null,
         ]),
         el('div.row', [
           session.startTime ? tag(`${session.startTime}${session.endTime ? `–${session.endTime}` : ''}`) : null,
           sessionMinutes(session) ? tag(formatDuration(sessionMinutes(session))) : null,
-          session.warmup
-            ? tag(`warm-up ${session.warmupMinutes ? `${session.warmupMinutes}m` : 'done'}`, 'teal')
-            : tag('no warm-up', 'locked'),
           el('button.btn.btn--ghost.btn--sm', {
             type: 'button',
             text: 'Open',
@@ -867,18 +559,8 @@ function sessionCard(ctx, session) {
               .map((s) => `${s.reps ?? '?'}×${s.weight ?? 'bw'}`)
               .join(', ')}`,
           }),
-          entry.substitutedFor
-            ? el('span.section__meta', { text: ` (instead of ${exerciseName(ctx.state, entry.substitutedFor)})` })
-            : null,
           entry.note ? el('div.hesitation.break', { text: entry.note }) : null,
         ]))),
-      (session.skipped ?? []).length
-        ? el('div.row', [
-            el('span.field__label', { text: 'Skipped' }),
-            ...session.skipped.map((entry) =>
-              tag(`${exerciseName(ctx.state, entry.exerciseId)} — ${entry.reason}`, entry.reason === 'pain' ? 'danger' : 'amber')),
-          ])
-        : null,
       session.notes ? el('p.muted.break', { text: session.notes }) : null,
     ]),
   ]);

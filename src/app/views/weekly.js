@@ -123,13 +123,12 @@ export function render(ctx) {
             el('div.card__body.stack--tight.stack', [
               el('div.row', [
                 tag(`${report.gym.done}/${report.gym.target || '—'} sessions`, report.gym.met ? 'teal' : ''),
-                ...report.gym.untrained.map((muscle) => tag(`${muscle}: nothing`, 'amber')),
               ]),
               ...report.gym.sessions.map(({ session, totals }) =>
                 el('div.row', [
                   el('span.mono.faint', { text: session.date }),
                   el('span', { text: `${totals.exercises} exercises · ${totals.sets} sets` }),
-                  totals.skipped ? tag(`${totals.skipped} skipped`, 'amber') : null,
+                  tag(`${totals.reps} reps`),
                 ])),
             ]),
           ]),

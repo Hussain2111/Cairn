@@ -268,7 +268,6 @@ function mergeInto(target, incoming) {
     'applications',
     'outreach',
     'exercises',
-    'routines',
     'painRecords',
     'greBlocks',
     'grePhases',

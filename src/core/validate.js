@@ -15,14 +15,9 @@ import {
   READING_STATUSES,
   READING_SOURCES,
   MUSCLE_GROUPS,
-  EQUIPMENT_TYPES,
   EXERCISE_STATUSES,
-  DROP_REASONS,
-  SKIP_REASONS,
   PAIN_TIMING,
   GRE_CAUSES,
-  CHESS_COLOURS,
-  CHESS_RESULTS,
   deepClone,
 } from './schema.js';
 import { isValidISODate, isValidTime } from './dates.js';
@@ -353,38 +348,12 @@ function validateRest(state, report) {
     if (!exercise.id) exercise.id = `ex_recovered_${i}`;
     fixString(exercise, 'name', `${path}.name`, report, { fallback: 'Untitled exercise' });
     if (!exercise.name.trim()) exercise.name = 'Untitled exercise';
-    fixString(exercise, 'cues', `${path}.cues`, report);
-    fixString(exercise, 'dropNote', `${path}.dropNote`, report);
     fixEnum(exercise, 'muscle', MUSCLE_GROUPS, `${path}.muscle`, report, 'core');
-    fixEnum(exercise, 'equipment', EQUIPMENT_TYPES, `${path}.equipment`, report, 'unspecified');
     fixEnum(exercise, 'status', EXERCISE_STATUSES, `${path}.status`, report, 'active');
     fixArray(exercise, 'secondary', `${path}.secondary`, report);
     exercise.secondary = [...new Set(exercise.secondary
       .filter((m) => MUSCLE_GROUPS.includes(m))
       .filter((m) => m !== exercise.muscle))];
-    if (exercise.status === 'dropped') {
-      if (exercise.dropReason !== null && !DROP_REASONS.includes(exercise.dropReason)) {
-        report.warn(`${path}.dropReason`, `"${exercise.dropReason}" is not one of ${DROP_REASONS.join(', ')} — cleared, so the library will ask again`);
-        exercise.dropReason = null;
-      }
-    } else if (exercise.dropReason) {
-      report.warn(path, 'carried a reason for being dropped but is not dropped — the reason was cleared');
-      exercise.dropReason = null;
-    }
-    return true;
-  });
-
-  state.routines = state.routines.filter((routine, i) => {
-    const path = `routines[${i}]`;
-    if (!isObject(routine)) {
-      report.error(path, 'routine is not an object');
-      return true;
-    }
-    if (!routine.id) routine.id = `rot_recovered_${i}`;
-    fixString(routine, 'name', `${path}.name`, report, { fallback: `Slot ${i + 1}` });
-    routine.order = Number.isFinite(Number(routine.order)) ? Number(routine.order) : i;
-    fixArray(routine, 'exerciseIds', `${path}.exerciseIds`, report);
-    routine.exerciseIds = routine.exerciseIds.filter((id) => typeof id === 'string');
     return true;
   });
 
@@ -420,29 +389,12 @@ function validateRest(state, report) {
     if (!session.date) {
       report.warn(path, 'gym session has no date — it is kept but will not count towards any week');
     }
-    if (session.startTime && !isValidTime(session.startTime)) {
-      report.warn(`${path}.startTime`, `"${session.startTime}" is not a valid HH:MM time — cleared`);
-      session.startTime = null;
-    }
-    session.durationMinutes = positiveOrNull(session.durationMinutes, `${path}.durationMinutes`, report);
-    if (session.endTime && !isValidTime(session.endTime)) {
-      report.warn(`${path}.endTime`, `"${session.endTime}" is not a valid HH:MM time — cleared`);
-      session.endTime = null;
-    }
-    session.warmup = !!session.warmup;
-    session.warmupMinutes = positiveOrNull(session.warmupMinutes, `${path}.warmupMinutes`, report);
-    fixArray(session, 'skipped', `${path}.skipped`, report);
-    session.skipped = session.skipped.filter((entry, si) => {
-      const sPath = `${path}.skipped[${si}]`;
-      if (!isObject(entry)) {
-        report.error(sPath, 'skipped exercise is not an object');
-        return true;
+    for (const key of ['startTime', 'endTime']) {
+      if (session[key] && !isValidTime(session[key])) {
+        report.warn(`${path}.${key}`, `"${session[key]}" is not a valid HH:MM time — cleared`);
+        session[key] = null;
       }
-      if (!entry.id) entry.id = `skip_recovered_${i}_${si}`;
-      fixString(entry, 'note', `${sPath}.note`, report);
-      fixEnum(entry, 'reason', SKIP_REASONS, `${sPath}.reason`, report, 'other');
-      return true;
-    });
+    }
     fixArray(session, 'exercises', `${path}.exercises`, report);
     session.exercises = session.exercises.filter((entry, ei) => {
       const ePath = `${path}.exercises[${ei}]`;
@@ -452,7 +404,6 @@ function validateRest(state, report) {
       }
       if (!entry.id) entry.id = `sx_recovered_${i}_${ei}`;
       fixString(entry, 'note', `${ePath}.note`, report);
-      if (entry.substitutedFor === undefined) entry.substitutedFor = null;
       fixArray(entry, 'sets', `${ePath}.sets`, report);
       entry.sets = entry.sets.filter((set, si) => {
         const sPath = `${ePath}.sets[${si}]`;
@@ -571,29 +522,6 @@ function validateRest(state, report) {
     return true;
   });
 
-  state.chessGames = state.chessGames.filter((game, i) => {
-    const path = `chessGames[${i}]`;
-    if (!isObject(game)) {
-      report.error(path, 'chess game is not an object');
-      return true;
-    }
-    if (!game.id) game.id = `chess_recovered_${i}`;
-    for (const key of ['url', 'opening', 'lesson', 'venue']) {
-      fixString(game, key, `${path}.${key}`, report);
-    }
-    fixEnum(game, 'colour', CHESS_COLOURS, `${path}.colour`, report, 'white');
-    fixEnum(game, 'result', CHESS_RESULTS, `${path}.result`, report, 'draw');
-    fixDate(game, 'date', `${path}.date`, report);
-    game.opponentRating = positiveOrNull(game.opponentRating, `${path}.opponentRating`, report);
-    if (!game.lesson.trim()) {
-      // The lesson is what the whole view is for, and the editor will not save
-      // a game without one. A file that has one anyway is kept -- refusing the
-      // import would lose the game entirely -- but it is said out loud.
-      report.warn(path, 'chess game has no "what I learned" line — it is kept, but it will not appear on the lessons page');
-    }
-    return true;
-  });
-
   state.reading = state.reading.filter((book, i) => {
     const path = `reading[${i}]`;
     if (!isObject(book)) {
@@ -698,13 +626,8 @@ function crossCheck(state, report) {
   }
 
   const exerciseIds = new Set((state.exercises ?? []).map((e) => e.id));
-  const routineIds = new Set((state.routines ?? []).map((r) => r.id));
 
   for (const session of state.gymSessions ?? []) {
-    if (session.routineId && !routineIds.has(session.routineId)) {
-      report.warn(`gymSessions[${session.id}]`, 'names a routine slot that is not in this file — the session is kept, unassigned');
-      session.routineId = null;
-    }
     for (const entry of session.exercises ?? []) {
       if (entry.exerciseId && !exerciseIds.has(entry.exerciseId)) {
         // Kept, not dropped: the sets are the record, and the view names an
@@ -850,12 +773,10 @@ export function summarise(state) {
     applications: (state.applications ?? []).length,
     outreach: (state.outreach ?? []).length,
     exercises: (state.exercises ?? []).length,
-    routines: (state.routines ?? []).length,
     gymSessions: (state.gymSessions ?? []).length,
     painRecords: (state.painRecords ?? []).length,
     greDays: (state.greDays ?? []).length,
     greEntries: (state.greEntries ?? []).length,
-    chessGames: (state.chessGames ?? []).length,
     reading: (state.reading ?? []).length,
     timeBlocks: (state.timeBlocks ?? []).length,
   };

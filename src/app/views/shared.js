@@ -178,7 +178,7 @@ export function editRecord({ title, fields, values = {}, submitLabel = 'Save', w
           if (typeof value === 'string') value = value.trim();
           if (spec.required && !value) {
             // `requiredMessage` is for the fields where "X is required" does not
-            // explain why — the chess lesson line being the reason it exists.
+            // explain why — the GRE portable move being the reason it exists.
             errorNode.textContent = spec.requiredMessage ?? `${spec.label} is required.`;
             control.focus();
             return;
