@@ -67,6 +67,43 @@ function cleanTitle(raw) {
     .trim();
 }
 
+// Trailing punctuation is almost always the sentence's, not the URL's, so a
+// closing bracket, comma or full stop is left behind rather than linked.
+const BARE_URL = /(^|\s)(https?:\/\/[^\s<>]+?)(?=[).,;:!?'"]*(?:\s|$))/g;
+const MARKDOWN_LINK = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
+
+/**
+ * URLs written into a task line.
+ *
+ * The model has always had a `links` array on every task and the editor has
+ * always been able to fill it; only the parser could not. Nothing new is asked
+ * of the writer for this — a URL sitting in a task line is unambiguous — so it
+ * is lifted out of the title and onto the task, and the title reads as a title
+ * again. A markdown link keeps its text as the label.
+ */
+function extractLinks(text) {
+  const links = [];
+  let out = String(text);
+
+  out = out.replace(MARKDOWN_LINK, (_match, label, url) => {
+    links.push({ url, label: label.trim() });
+    // The label stays in the title: it is what the task is called.
+    return ` ${label.trim()} `;
+  });
+
+  out = out.replace(BARE_URL, (_match, lead, url) => {
+    links.push({ url, label: '' });
+    return lead;
+  });
+
+  return {
+    // Removing a URL from mid-sentence leaves the punctuation that followed it
+    // hanging on a space: "Check , then move on".
+    text: out.replace(/\s{2,}/g, ' ').replace(/\s+([).,;:!?])/g, '$1').trim(),
+    links,
+  };
+}
+
 /** `@45m`, `@2h`, `@1h30m`, `@90` → minutes. Returns null when absent. */
 function extractEstimate(text) {
   const match = text.match(/(^|\s)@(\d+h)?(\d+m)?(\d+)?(?=\s|$)/);
@@ -254,6 +291,10 @@ export function parseOutline(source) {
       }
 
       let text = taskMatch[1];
+      // Links come out first: a URL can contain an "@" or a "^", and pulling
+      // it clear means neither marker can be read out of the middle of one.
+      const linked = extractLinks(text);
+      text = linked.text;
       const estimate = extractEstimate(text);
       text = estimate.text;
       const due = extractDue(text);
@@ -268,7 +309,13 @@ export function parseOutline(source) {
         report.error(lineNo, 'This task has no title.', line);
         continue;
       }
-      step.tasks.push({ title, estimateMinutes: estimate.minutes, due: due.due, line: lineNo });
+      step.tasks.push({
+        title,
+        estimateMinutes: estimate.minutes,
+        due: due.due,
+        links: linked.links,
+        line: lineNo,
+      });
       continue;
     }
 
@@ -306,6 +353,14 @@ export function parseOutline(source) {
 
   const stats = countTree(threads);
 
+  if (stats.tasksWithLinks) {
+    report.warn(
+      0,
+      `${stats.links} link${stats.links === 1 ? '' : 's'} in ${stats.tasksWithLinks} task title${stats.tasksWithLinks === 1 ? '' : 's'} ` +
+      'moved onto the task itself, so the title reads as a title. Nothing was lost.',
+    );
+  }
+
   // --- the self-check ----------------------------------------------------
   // Every marker in the text became a record, or was rejected with an error.
   // If those two numbers disagree the parser dropped something, and that is
@@ -337,6 +392,8 @@ export function countTree(threads) {
   let steps = 0;
   let tasks = 0;
   let implicitSteps = 0;
+  let links = 0;
+  let tasksWithLinks = 0;
   for (const thread of threads) {
     stages += thread.stages.length;
     for (const stage of thread.stages) {
@@ -344,10 +401,15 @@ export function countTree(threads) {
       for (const step of stage.steps) {
         if (step.implicit) implicitSteps += 1;
         tasks += step.tasks.length;
+        for (const task of step.tasks) {
+          const count = (task.links ?? []).length;
+          links += count;
+          if (count) tasksWithLinks += 1;
+        }
       }
     }
   }
-  return { threads: threads.length, stages, steps, tasks, implicitSteps };
+  return { threads: threads.length, stages, steps, tasks, implicitSteps, links, tasksWithLinks };
 }
 
 /**

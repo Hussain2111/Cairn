@@ -491,8 +491,8 @@ Day 1 | 2026-09-02 | C`, { blockCodes: CODES });
 test('v5 gains the GRE collections, empty, with the retrieval spacing', () => {
   const { state, error, notes } = migrate({
     schemaVersion: 5,
-    threads: [], notes: [], exercises: [], routines: [], gymSessions: [], painRecords: [],
-    reading: [], timeBlocks: [], chessGames: [], settings: {},
+    threads: [], notes: [], exercises: [], gymSessions: [], painRecords: [],
+    reading: [], timeBlocks: [], settings: {},
   });
 
   assert.equal(error, null);

@@ -14,7 +14,7 @@ import {
 import { walkTasks, threadProgress, threadStall, isStageComplete } from './threads.js';
 import { weeklyDistribution } from './timeblocks.js';
 import { pipelineStats } from './pipelines.js';
-import { weekProgress, muscleCoverage, sessionsInWeek, sessionTotals } from './gym.js';
+import { weekProgress, sessionsInWeek, sessionTotals } from './gym.js';
 
 export function generateWeeklyReview(state, { today = todayISO(), weekStart = null } = {}) {
   const start = weekStart || startOfWeek(today);
@@ -61,17 +61,14 @@ export function generateWeeklyReview(state, { today = todayISO(), weekStart = nu
 
   const pipeline = pipelineStats(state, { from: start, to: end });
   const time = weeklyDistribution(state, { weekStart: start });
-  // The gym replaced the habit list. What belongs in a weekly review is the
-  // same question the gym view asks: did the week hit its target, and which
-  // muscle groups did it miss.
-  const gymWeek = weekProgress(state, start);
+  // What belongs in a weekly review is the question the gym view asks: how many
+  // sessions the week got, and what was in them.
   const gym = {
-    ...gymWeek,
+    ...weekProgress(state, start),
     sessions: sessionsInWeek(state, start).map((session) => ({
       session,
       totals: sessionTotals(session),
     })),
-    untrained: muscleCoverage(state, start).filter((row) => !row.trained).map((row) => row.muscle),
   };
 
   const reading = (state?.reading ?? []).filter((b) => b.status === 'reading');
@@ -188,11 +185,8 @@ export function weeklyReviewMarkdown(report) {
     lines.push('_Nothing logged._');
   } else {
     lines.push(`- Sessions: ${report.gym.done}/${report.gym.target}${report.gym.met ? ' ✓' : ''}`);
-    lines.push(report.gym.untrained.length
-      ? `- Not trained this week: ${report.gym.untrained.join(', ')}`
-      : '- Every muscle group was trained');
     for (const { session, totals } of report.gym.sessions) {
-      lines.push(`  - ${session.date}: ${totals.exercises} exercise(s), ${totals.sets} sets${totals.skipped ? `, ${totals.skipped} skipped` : ''}`);
+      lines.push(`  - ${session.date}: ${totals.exercises} exercise(s), ${totals.sets} sets, ${totals.reps} reps`);
     }
   }
   lines.push('');

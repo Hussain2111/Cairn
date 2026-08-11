@@ -69,7 +69,7 @@ export function render(ctx) {
         }, { undoable: false });
       }),
       el('p.field__hint', {
-        text: 'The number the week is judged against. Exercises, the rotation and everything else live in Gym › Library.',
+        text: 'The number the week is judged against. The exercise library lives in Gym › Library.',
       }),
     ]),
 
@@ -145,13 +145,11 @@ export function render(ctx) {
             state.outreach.length = 0;
             state.exercises.length = 0;
             state.gymSessions.length = 0;
-            state.routines.length = 0;
             state.painRecords.length = 0;
             state.greBlocks.length = 0;
             state.grePhases.length = 0;
             state.greDays.length = 0;
             state.greEntries.length = 0;
-            state.chessGames.length = 0;
             state.reading.length = 0;
             state.timeBlocks.length = 0;
             state.archivedStages.length = 0;
@@ -313,6 +311,7 @@ export function renderImportReport(report) {
         tag(`${report.summary.outreach} outreach`),
         tag(`${report.summary.exercises} exercises`),
         tag(`${report.summary.gymSessions} gym sessions`),
+        tag(`${report.summary.painRecords} pain records`),
         tag(`${report.summary.timeBlocks} time blocks`),
       ]),
     );

@@ -3,9 +3,6 @@ import assert from 'node:assert/strict';
 
 import {
   weekProgress,
-  muscleCoverage,
-  gapReport,
-  equipmentPreference,
   sessions,
   sessionsInWeek,
   sessionTotals,
@@ -16,11 +13,10 @@ import {
   exerciseNameTaken,
   exerciseMuscles,
   activeExercises,
+  droppedExercises,
   exerciseProgression,
   lastSetsFor,
   trainedExerciseIds,
-  routines,
-  nextRoutine,
   seedLibrary,
   painByLocation,
   painTable,
@@ -29,10 +25,8 @@ import {
 import {
   createEmptyState,
   makeExercise,
-  makeRoutine,
   makeGymSession,
   makeSessionExercise,
-  makeSkippedExercise,
   makeSet,
   makePainRecord,
 } from '../../src/core/schema.js';
@@ -44,11 +38,11 @@ function fixture({ target = 4 } = {}) {
   const state = createEmptyState([]);
   state.settings.gymWeeklyTarget = target;
 
-  const bench = makeExercise({ name: 'Bench press', muscle: 'chest', secondary: ['arms'], equipment: 'barbell' });
-  const cableFly = makeExercise({ name: 'Cable fly', muscle: 'chest', equipment: 'cable' });
-  const row = makeExercise({ name: 'Barbell row', muscle: 'back', secondary: ['arms'], equipment: 'barbell' });
-  const squat = makeExercise({ name: 'Squat', muscle: 'legs', equipment: 'barbell' });
-  const pullup = makeExercise({ name: 'Pull-up', muscle: 'back', equipment: 'bodyweight' });
+  const bench = makeExercise({ name: 'Bench press', muscle: 'chest', secondary: ['arms'] });
+  const cableFly = makeExercise({ name: 'Cable fly', muscle: 'chest' });
+  const row = makeExercise({ name: 'Barbell row', muscle: 'back', secondary: ['arms'] });
+  const squat = makeExercise({ name: 'Squat', muscle: 'legs' });
+  const pullup = makeExercise({ name: 'Pull-up', muscle: 'back' });
   state.exercises.push(bench, cableFly, row, squat, pullup);
 
   const add = (date, entries, patch = {}) => {
@@ -95,118 +89,31 @@ test('going past the target is not a debt', () => {
   assert.equal(progress.met, true);
 });
 
-test('the session duration comes from the clock, or from what was written down', () => {
+test('the session duration comes from the clock, and never goes negative', () => {
   assert.equal(sessionMinutes(makeGymSession({ startTime: '18:05', endTime: '19:20' })), 75);
-  assert.equal(sessionMinutes(makeGymSession({ durationMinutes: 55 })), 55, 'an imported log rarely has times');
-  assert.equal(sessionMinutes(makeGymSession({ startTime: '19:00', endTime: '18:00', durationMinutes: 40 })), 40,
-    'times that cannot be right fall back rather than going negative');
+  assert.equal(sessionMinutes(makeGymSession({ startTime: '19:00', endTime: '18:00' })), 0);
+  assert.equal(sessionMinutes(makeGymSession({ startTime: '18:00' })), 0, 'half a pair is not a duration');
   assert.equal(sessionMinutes(makeGymSession()), 0);
 });
 
-// --- muscle coverage --------------------------------------------------------
+// --- what a session touched -------------------------------------------------
 
-test('coverage separates direct work from assistance', () => {
+test('a session lists the muscles it touched, primary and secondary', () => {
   const { state, bench, row, add } = fixture();
-  add('2026-08-03', [[bench, [[10, 60], [8, 65]]]]);
-  add('2026-08-05', [[row, [[10, 50]]]]);
-
-  const byMuscle = Object.fromEntries(muscleCoverage(state, FRI).map((c) => [c.muscle, c]));
-
-  assert.equal(byMuscle.chest.primarySets, 2);
-  assert.equal(byMuscle.chest.trained, true);
-  assert.equal(byMuscle.back.primarySets, 1);
-
-  // Arms were worked as a secondary on both, which is not an arms day.
-  assert.equal(byMuscle.arms.primarySets, 0);
-  assert.equal(byMuscle.arms.secondarySets, 3);
-  assert.equal(byMuscle.arms.trained, false, 'three pressing days do not make an arms day');
-  assert.equal(byMuscle.arms.touched, true);
-
-  assert.equal(byMuscle.legs.trained, false);
-  assert.equal(byMuscle.legs.sets, 0);
+  const session = add('2026-08-03', [[bench, [[10, 60]]], [row, [[10, 50]]]]);
+  assert.deepEqual(sessionMuscles(state, session), ['chest', 'back', 'arms']);
 });
 
-test('an untrained group says how long it has actually been', () => {
-  const { state, squat, bench, add } = fixture();
-  add('2026-07-22', [[squat, [[5, 100]]]]);
-  add('2026-08-03', [[bench, [[10, 60]]]]);
-
-  const coverage = muscleCoverage(state, FRI);
-  assert.equal(coverage.find((c) => c.muscle === 'legs').lastTrained, '2026-07-22');
-  assert.equal(coverage.find((c) => c.muscle === 'arms').lastTrained, null, 'never trained reads as never');
-});
-
-test('an exercise logged with no sets does not light up its muscle group', () => {
+test('an exercise logged with no sets is not part of what the session touched', () => {
   const { state, bench, add } = fixture();
-  add('2026-08-03', [[bench, []]]);
-  assert.equal(muscleCoverage(state, FRI).find((c) => c.muscle === 'chest').trained, false);
-  assert.deepEqual(sessionMuscles(state, state.gymSessions[0]), []);
+  const session = add('2026-08-03', [[bench, []]]);
+  assert.deepEqual(sessionMuscles(state, session), []);
 });
 
 test('secondary muscles are listed with the primary, deduplicated', () => {
   const { state, bench } = fixture();
   assert.deepEqual(exerciseMuscles(state, bench.id), ['chest', 'arms']);
   assert.deepEqual(exerciseMuscles(state, 'nonsense'), []);
-});
-
-// --- the gap report ---------------------------------------------------------
-
-test('a muscle group with nothing active left is reported as a gap', () => {
-  const { state, squat, cableFly, bench } = fixture();
-  squat.status = 'dropped';
-  squat.dropReason = 'pain';
-
-  const gaps = gapReport(state);
-  const legs = gaps.find((g) => g.muscle === 'legs');
-  assert.ok(legs, 'legs has no active exercise left');
-  assert.equal(legs.reason, 'everything dropped');
-  assert.equal(legs.droppedForPain, 1);
-
-  // Chest still has two active options, so it is not a gap.
-  assert.equal(gaps.some((g) => g.muscle === 'chest'), false);
-  assert.ok(cableFly && bench);
-
-  // A group with nothing in the library at all is a different problem.
-  assert.equal(gaps.find((g) => g.muscle === 'core').reason, 'nothing in the library');
-});
-
-test('a group whose only options are untried is a gap of its own kind', () => {
-  const state = createEmptyState([]);
-  state.exercises.push(makeExercise({ name: 'Hanging leg raise', muscle: 'core', status: 'untried' }));
-  const core = gapReport(state).find((g) => g.muscle === 'core');
-  assert.equal(core.reason, 'only untried options');
-  assert.equal(core.untried.length, 1);
-});
-
-// --- equipment --------------------------------------------------------------
-
-test('equipment preference counts what was kept and what hurt', () => {
-  const { state, bench, cableFly, add } = fixture();
-  add('2026-08-03', [[cableFly, [[12, 15], [12, 15], [12, 15]]]]);
-  add('2026-08-05', [[bench, [[10, 60]]]]);
-
-  bench.status = 'dropped';
-  bench.dropReason = 'pain';
-  state.painRecords.push(makePainRecord({ location: 'right shoulder', exerciseId: bench.id }));
-
-  const rows = equipmentPreference(state, { today: FRI });
-  const byKind = Object.fromEntries(rows.map((row) => [row.equipment, row]));
-
-  assert.equal(byKind.cable.sets, 3);
-  assert.equal(byKind.cable.active, 1);
-  assert.equal(byKind.cable.droppedForPain, 0);
-  assert.equal(byKind.cable.lastUsed, '2026-08-03');
-
-  assert.equal(byKind.barbell.droppedForPain, 1);
-  assert.equal(byKind.barbell.painReports, 1);
-  assert.equal(Math.round(byKind.cable.shareOfSets * 100), 75);
-});
-
-test('exercises that never say what equipment they use are gathered, not guessed at', () => {
-  const state = createEmptyState([]);
-  state.exercises.push(makeExercise({ name: 'Mystery machine', muscle: 'back' }));
-  const rows = equipmentPreference(state, { today: FRI });
-  assert.equal(rows.find((row) => row.equipment === 'unspecified').total, 1);
 });
 
 // --- the catalogue ----------------------------------------------------------
@@ -216,23 +123,14 @@ test('dropping an exercise hides it from the picker without touching history', (
   add('2026-08-03', [[bench, [[10, 60], [8, 65]]]]);
 
   bench.status = 'dropped';
-  bench.dropReason = 'disliked';
 
   assert.equal(activeExercises(state).some((e) => e.id === bench.id), false);
+  assert.deepEqual(droppedExercises(state).map((e) => e.name), ['Bench press']);
   assert.equal(exerciseName(state, bench.id), 'Bench press', 'still named in the session');
   assert.deepEqual(exerciseUsage(state, bench.id), { sessions: 1, sets: 2 });
   assert.equal(sessionTotals(state.gymSessions[0]).sets, 2);
-  assert.equal(muscleCoverage(state, FRI).find((c) => c.muscle === 'chest').primarySets, 2);
-});
-
-test('an untried exercise is still offered — trying it is the point', () => {
-  const state = createEmptyState([]);
-  const untried = makeExercise({ name: 'Pendlay row', muscle: 'back', status: 'untried' });
-  const dropped = makeExercise({ name: 'Upright row', muscle: 'shoulders', status: 'dropped' });
-  state.exercises.push(untried, dropped);
-
-  const names = activeExercises(state).map((e) => e.name);
-  assert.deepEqual(names, ['Pendlay row']);
+  assert.deepEqual(sessionMuscles(state, state.gymSessions[0]), ['chest', 'arms'],
+    'the session it appears in is unchanged');
 });
 
 test('an exercise that is gone entirely is named rather than rendered blank', () => {
@@ -242,7 +140,7 @@ test('an exercise that is gone entirely is named rather than rendered blank', ()
 
   assert.equal(exerciseName(state, bench.id), 'Removed exercise');
   assert.equal(sessionTotals(state.gymSessions[0]).sets, 1, 'the sets are still the record');
-  assert.equal(muscleCoverage(state, FRI).find((c) => c.muscle === 'chest').primarySets, 0);
+  assert.deepEqual(sessionMuscles(state, state.gymSessions[0]), [], 'but it can no longer say what it trained');
 });
 
 test('duplicate exercise names are caught, dropped ones included', () => {
@@ -254,78 +152,31 @@ test('duplicate exercise names are caught, dropped ones included', () => {
   assert.equal(exerciseNameTaken(state, 'Bench press'), true);
 });
 
-test('the starter library seeds once, with a rotation, and never duplicates', () => {
+test('the starter library seeds once and never duplicates', () => {
   const state = createEmptyState([]);
   const first = seedLibrary(state);
   assert.ok(first > 15);
-  assert.equal(routines(state).length, 2, 'an A/B split is two slots');
   assert.equal(seedLibrary(state), 0);
   assert.equal(state.exercises.length, first);
-  assert.equal(routines(state).length, 2);
 });
 
-// --- the rotation -----------------------------------------------------------
-
-test('the next slot is the one after the last session that named one', () => {
-  const state = createEmptyState([]);
-  const a = makeRoutine({ name: 'A', order: 0 });
-  const b = makeRoutine({ name: 'B', order: 1 });
-  state.routines.push(b, a); // stored out of order on purpose
-
-  assert.equal(nextRoutine(state).name, 'A', 'with nothing logged, start at the top');
-
-  state.gymSessions.push(makeGymSession({ date: '2026-08-03', routineId: a.id }));
-  assert.equal(nextRoutine(state).name, 'B');
-
-  state.gymSessions.push(makeGymSession({ date: '2026-08-05', routineId: b.id }));
-  assert.equal(nextRoutine(state).name, 'A', 'and it wraps');
-});
-
-test('a session with no slot does not disturb the rotation', () => {
-  const state = createEmptyState([]);
-  const a = makeRoutine({ name: 'A', order: 0 });
-  const b = makeRoutine({ name: 'B', order: 1 });
-  state.routines.push(a, b);
-  state.gymSessions.push(makeGymSession({ date: '2026-08-03', routineId: a.id }));
-  state.gymSessions.push(makeGymSession({ date: '2026-08-05', routineId: null }));
-
-  assert.equal(nextRoutine(state).name, 'B', 'the last session that named a slot is what counts');
-});
-
-// --- partial sessions -------------------------------------------------------
-
-test('what was skipped is recorded beside what was done', () => {
-  const { state, bench, squat, add } = fixture();
-  const session = add('2026-08-03', [[bench, [[10, 60]]]]);
-  session.skipped = [
-    makeSkippedExercise({ exerciseId: squat.id, reason: 'occupied', note: 'rack taken' }),
-  ];
-
-  const totals = sessionTotals(session);
-  assert.equal(totals.exercises, 1);
-  assert.equal(totals.skipped, 1);
-  // A skipped exercise is not training: it must not light up its muscle group.
-  assert.equal(muscleCoverage(state, FRI).find((c) => c.muscle === 'legs').trained, false);
-});
-
-test('a substitution keeps both halves', () => {
-  const { state, squat, bench, add } = fixture();
-  const session = add('2026-08-03', []);
-  session.exercises = [makeSessionExercise({
-    exerciseId: bench.id,
-    substitutedFor: squat.id,
-    sets: [makeSet({ reps: 10, weight: 60 })],
-  })];
-
-  assert.equal(exerciseName(state, session.exercises[0].exerciseId), 'Bench press');
-  assert.equal(exerciseName(state, session.exercises[0].substitutedFor), 'Squat');
-});
+// --- the free-text note -----------------------------------------------------
 
 test('a per-exercise note is kept verbatim, not categorised', () => {
   const { state, bench, add } = fixture();
-  add('2026-08-03', [[bench, [[10, 60]]], ]);
-  state.gymSessions[0].exercises[0].note = 'no tension in the target muscle, first two sets locking out at the top';
-  assert.match(state.gymSessions[0].exercises[0].note, /locking out at the top/);
+  add('2026-08-03', [[bench, [[10, 60]], 'no tension in the target muscle, first two sets locking out at the top']]);
+  assert.match(
+    state.gymSessions[0].exercises[0].note,
+    /no tension in the target muscle, first two sets locking out at the top/,
+  );
+});
+
+test('a session note holds whatever the structured fields used to', () => {
+  const { state, bench, add } = fixture();
+  const session = add('2026-08-03', [[bench, [[10, 60]]]]);
+  session.notes = 'Ten minutes of warm-up. Skipped leg press, machine occupied.';
+  assert.match(session.notes, /warm-up/);
+  assert.match(session.notes, /Skipped leg press/);
 });
 
 // --- progression ------------------------------------------------------------

@@ -37,12 +37,10 @@ test('a well-formed export round-trips exactly', () => {
     applications: 0,
     outreach: 0,
     exercises: 0,
-    routines: 0,
     gymSessions: 0,
     painRecords: 0,
     greDays: 0,
     greEntries: 0,
-    chessGames: 0,
     reading: 0,
     timeBlocks: 0,
   });
@@ -176,20 +174,19 @@ test('a stray completion date on an open task is cleared', () => {
   assert.equal(result.state.threads[0].stages[0].steps[0].tasks[0].doneAt, null);
 });
 
-test('a dropped exercise with no reason is kept and asks for one', () => {
+test('an exercise with a nonsense status is kept as active, and its secondaries are cleaned', () => {
   const state = createEmptyState([]);
   state.exercises.push({
     id: 'ex1', name: 'Upright row', muscle: 'shoulders', secondary: ['shoulders', 'nonsense'],
-    equipment: 'trebuchet', status: 'dropped', dropReason: 'because I felt like it', dropNote: '', cues: '',
+    status: 'retired-ish',
   });
   const result = validateImport(JSON.stringify(state));
   assert.equal(result.ok, true);
   const [exercise] = result.state.exercises;
-  assert.equal(exercise.status, 'dropped');
-  assert.equal(exercise.dropReason, null, 'an unrecognised reason is cleared, not guessed at');
-  assert.equal(exercise.equipment, 'unspecified');
+  assert.equal(exercise.name, 'Upright row', 'the record is repaired, never dropped');
+  assert.equal(exercise.status, 'active', 'an unrecognised status falls back rather than hiding the exercise');
   assert.deepEqual(exercise.secondary, [], 'a secondary that repeats the primary is not a secondary');
-  assert.match(messages(result.warnings), /not one of disliked, pain, unavailable/);
+  assert.match(messages(result.warnings), /not one of active, dropped/);
 });
 
 test('pain with no location is filed rather than dropped', () => {

@@ -194,3 +194,37 @@ test('import is disabled until something is pasted', async ({ page }) => {
   await expect(page.locator('dialog').getByRole('button', { name: 'Import', exact: true })).toBeDisabled();
   await expect(page.locator('dialog')).toContainText('Nothing pasted yet');
 });
+
+test('a URL in a task line becomes a link on the task', async ({ page }) => {
+  await paste(page, `# Compiler project
+## Lexer
+> every token type has a passing test
+### Numbers
+- Read the spec https://example.com/spec @45m
+- See [the RFC](https://example.com/rfc) before starting
+- Plain task
+`);
+
+  const dialog = page.locator('dialog');
+  await expect(dialog).toContainText('3 tasks');
+  await expect(dialog).toContainText('2 links');
+  // Lifting a link out of a title changes the title, so it is reported.
+  await expect(dialog).toContainText('moved onto the task itself');
+
+  await dialog.getByRole('button', { name: 'Import', exact: true }).click();
+
+  const spec = page.locator('.task', { hasText: 'Read the spec' });
+  await expect(spec).toContainText('1 link');
+  await expect(spec).toContainText('45m');
+  await expect(spec).not.toContainText('https://example.com/spec');
+
+  // The markdown link keeps its text as the title and its URL as the link.
+  const rfc = page.locator('.task', { hasText: 'See the RFC before starting' });
+  await expect(rfc).toContainText('1 link');
+
+  await expect(page.locator('.task', { hasText: 'Plain task' })).not.toContainText('link');
+
+  // And the link is really on the task, reachable from its editor.
+  await spec.locator('.task__title').click();
+  await expect(page.locator('dialog').getByRole('link', { name: 'https://example.com/spec' })).toBeVisible();
+});

@@ -300,12 +300,157 @@ function v5_to_v6(input) {
   return { state, notes };
 }
 
+/**
+ * v6 → v7 — two reductions.
+ *
+ *   - Chess is gone: the view, the module and the collection. Dropped rather
+ *     than archived, at the owner's instruction, but the count is reported so
+ *     it is never a silent deletion.
+ *   - The gym keeps what it is actually used for — sets, reps, weights, dates
+ *     and notes — and loses the scaffolding around it: equipment, the A/B
+ *     rotation, structured skips and substitutions, warm-up fields and cues.
+ *
+ * Nothing logged is lost. Every removed *session* field that held something
+ * worth keeping is folded into that session's free-text note, which is where
+ * it would be written today. Removed *exercise* fields have no note to fold
+ * into, so they are gathered into a single archive note rather than deleted —
+ * the same treatment the old habit collection got in v4→v5.
+ */
+function v6_to_v7(input) {
+  const state = deepClone(input);
+  const notes = [];
+
+  // --- chess ----------------------------------------------------------------
+  const chess = Array.isArray(state.chessGames) ? state.chessGames.length : 0;
+  if (chess) notes.push(`removed ${chess} chess game(s) along with the chess view`);
+  delete state.chessGames;
+
+  // A time block pointed at the chess area would now name something that does
+  // not exist, and the validator would only report it as unrecognised.
+  let unassigned = 0;
+  for (const block of state.timeBlocks ?? []) {
+    if (block && block.activity === 'area:chess') {
+      block.activity = null;
+      unassigned += 1;
+    }
+  }
+  if (unassigned) notes.push(`unassigned ${unassigned} time block(s) that pointed at chess`);
+
+  // --- gym sessions ---------------------------------------------------------
+  const routineNames = new Map(
+    (Array.isArray(state.routines) ? state.routines : []).map((r) => [r.id, r.name]),
+  );
+  const exerciseNames = new Map(
+    (state.exercises ?? []).map((e) => [e.id, e.name]),
+  );
+  let folded = 0;
+
+  for (const session of state.gymSessions ?? []) {
+    if (!session || typeof session !== 'object') continue;
+    const lines = [];
+
+    const slot = routineNames.get(session.routineId);
+    if (slot) lines.push(`Slot: ${slot}.`);
+
+    if (session.warmup) {
+      lines.push(session.warmupMinutes
+        ? `Warm-up: ${session.warmupMinutes} min.`
+        : 'Warmed up.');
+    }
+
+    // A duration recorded without clock times has nowhere else to go once the
+    // session is defined by start and end.
+    if (session.durationMinutes && !(session.startTime && session.endTime)) {
+      lines.push(`Duration: ${session.durationMinutes} min.`);
+    }
+
+    for (const entry of session.skipped ?? []) {
+      const name = exerciseNames.get(entry.exerciseId) ?? 'an exercise';
+      const detail = [entry.reason, entry.note].filter(Boolean).join(' — ');
+      lines.push(`Skipped ${name}${detail ? ` (${detail})` : ''}.`);
+    }
+
+    for (const entry of session.exercises ?? []) {
+      // A substitution was two ids; it becomes one clause on the note of the
+      // exercise that actually happened.
+      const insteadOf = entry.substitutedFor ? exerciseNames.get(entry.substitutedFor) : null;
+      if (insteadOf) {
+        entry.note = [entry.note, `Instead of ${insteadOf}.`].filter(Boolean).join(' ');
+      }
+      delete entry.substitutedFor;
+      if (entry.note === undefined) entry.note = '';
+    }
+
+    if (lines.length) {
+      session.notes = [session.notes, ...lines].filter(Boolean).join(' ').trim();
+      folded += 1;
+    }
+
+    delete session.routineId;
+    delete session.warmup;
+    delete session.warmupMinutes;
+    delete session.durationMinutes;
+    delete session.skipped;
+    delete session.habitId;
+  }
+  if (folded) notes.push(`folded the warm-up, slot and skipped-exercise notes of ${folded} session(s) into their session notes`);
+  delete state.routines;
+
+  // --- the library ----------------------------------------------------------
+  const archive = [];
+  let untried = 0;
+  for (const exercise of state.exercises ?? []) {
+    if (!exercise || typeof exercise !== 'object') continue;
+    const kept = [];
+    if (exercise.equipment && exercise.equipment !== 'unspecified') kept.push(`equipment: ${exercise.equipment}`);
+    if (exercise.cues) kept.push(`cues: ${String(exercise.cues).replace(/\s+/g, ' ').trim()}`);
+    if (exercise.dropReason) kept.push(`dropped because: ${exercise.dropReason}`);
+    if (exercise.dropNote) kept.push(`note: ${String(exercise.dropNote).replace(/\s+/g, ' ').trim()}`);
+    if (kept.length) archive.push(`- **${exercise.name}** — ${kept.join('; ')}`);
+
+    // "Untried" is gone: an exercise is in the library or it is dropped.
+    if (exercise.status === 'untried') {
+      exercise.status = 'active';
+      untried += 1;
+    }
+    delete exercise.equipment;
+    delete exercise.cues;
+    delete exercise.dropReason;
+    delete exercise.dropNote;
+    delete exercise.retired;
+  }
+  if (untried) notes.push(`moved ${untried} untried exercise(s) into the active library`);
+
+  if (archive.length) {
+    if (!Array.isArray(state.notes)) state.notes = [];
+    state.notes.push({
+      id: uid('note'),
+      title: 'Gym library archive',
+      body: [
+        'The gym no longer records equipment, cues or a reason for dropping an exercise.',
+        'What those fields held is kept here rather than deleted.',
+        '',
+        ...archive,
+      ].join('\n'),
+      templateId: null,
+      attach: null,
+      createdAt: nowStamp(),
+      updatedAt: nowStamp(),
+    });
+    notes.push(`kept the equipment, cues and drop reasons of ${archive.length} exercise(s) in a note called "Gym library archive"`);
+  }
+
+  state.schemaVersion = 7;
+  return { state, notes };
+}
+
 export const MIGRATIONS = {
   1: v1_to_v2,
   2: v2_to_v3,
   3: v3_to_v4,
   4: v4_to_v5,
   5: v5_to_v6,
+  6: v6_to_v7,
 };
 
 export const OLDEST_SUPPORTED_VERSION = 1;

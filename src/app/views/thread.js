@@ -304,7 +304,7 @@ function renderTask(ctx, thread, stage, step, task, actionable, focusId) {
 
     el('div.task__meta', [
       task.estimateMinutes ? el('span', { text: formatDuration(task.estimateMinutes) }) : null,
-      task.due ? dueTag(task.due, ctx.today) : null,
+      task.due ? dueTag(task.due, ctx.today, { done: task.done }) : null,
       task.notes ? tag('note') : null,
       task.links?.length ? tag(`${task.links.length} link${task.links.length > 1 ? 's' : ''}`) : null,
     ]),
@@ -560,9 +560,21 @@ async function editTask(ctx, task) {
       });
       return el('div.stack', [
         el('label.field', [el('span.field__label', { text: 'Title' }), titleInput]),
+        // Both have always been optional, but sitting side by side with the
+        // same weight as the title they read as two more fields to fill in.
+        // A due date invented to satisfy a form is worse than none: Today
+        // surfaces overdue tasks, so a fake one costs attention every morning.
         el('div.field-row', [
-          el('label.field', [el('span.field__label', { text: 'Due' }), dueInput]),
-          el('label.field', [el('span.field__label', { text: 'Estimate (minutes)' }), estimateInput]),
+          el('label.field', [
+            el('span.field__label', { text: 'Due' }),
+            dueInput,
+            el('span.field__hint', { text: 'Optional. Only set one if the date is real.' }),
+          ]),
+          el('label.field', [
+            el('span.field__label', { text: 'Estimate' }),
+            estimateInput,
+            el('span.field__hint', { text: 'Optional, in minutes.' }),
+          ]),
         ]),
         el('label.field', [el('span.field__label', { text: 'Notes' }), notesInput]),
         linkEditor(draft.links),

@@ -18,7 +18,6 @@ export const ACTIVITY_AREAS = [
   { id: 'sql', label: 'SQL practice', route: '#/questions/sql' },
   { id: 'reading', label: 'Reading', route: '#/reading' },
   { id: 'applications', label: 'Applications and outreach', route: '#/pipelines' },
-  { id: 'chess', label: 'Chess', route: '#/chess' },
   { id: 'notes', label: 'Writing and notes', route: '#/notes' },
   { id: 'admin', label: 'Admin and errands', route: null },
   { id: 'rest', label: 'Rest', route: null },

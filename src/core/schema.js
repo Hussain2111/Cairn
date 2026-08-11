@@ -7,7 +7,7 @@
 import { uid } from './ids.js';
 import { todayISO, nowStamp } from './dates.js';
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 export const STORAGE_KEY = 'cairn.state';
 export const APP_VERSION = '1.0.0';
 
@@ -44,30 +44,8 @@ export const READING_SOURCES = ['manual', 'pdf'];
 /** The muscle groups an exercise trains. Fixed list, deliberately short. */
 export const MUSCLE_GROUPS = ['chest', 'back', 'shoulders', 'legs', 'arms', 'core'];
 
-/**
- * How the resistance is applied. Not cosmetic: a cable or machine variant of a
- * movement can work where the free-weight variant does not, and that pattern is
- * only visible if the app records which is which.
- *
- * `unspecified` exists for exercises that predate this field or came in from an
- * import that did not say. It is a gap to be filled, not a seventh kind of
- * equipment, and the library says so.
- */
-export const EQUIPMENT_TYPES = ['cable', 'machine', 'smith', 'dumbbell', 'barbell', 'bodyweight', 'unspecified'];
-export const REAL_EQUIPMENT = EQUIPMENT_TYPES.filter((e) => e !== 'unspecified');
-
-/** Active, never tried, or deliberately stopped. */
-export const EXERCISE_STATUSES = ['active', 'untried', 'dropped'];
-
-/**
- * Why an exercise was dropped. These are three different problems — one is a
- * preference, one is an injury signal, one is about the gym — and collapsing
- * them would throw away the only thing that makes the list worth keeping.
- */
-export const DROP_REASONS = ['disliked', 'pain', 'unavailable'];
-
-/** Why a planned exercise did not happen. A partial session is normal. */
-export const SKIP_REASONS = ['occupied', 'time', 'pain', 'chose not to', 'other'];
+/** In the library, or deliberately stopped. */
+export const EXERCISE_STATUSES = ['active', 'dropped'];
 
 /** Whether pain showed up in the movement or afterwards. */
 export const PAIN_TIMING = ['during', 'after'];
@@ -99,44 +77,34 @@ export const DEFAULT_GRE_BLOCKS = [
   { code: 'F', name: 'Log consolidation', minutes: 20, order: 6 },
 ];
 
-export const CHESS_COLOURS = ['white', 'black'];
-export const CHESS_RESULTS = ['win', 'loss', 'draw'];
-export const CHESS_VENUES = ['chess.com', 'lichess', 'over the board', 'other'];
-
 /**
  * Seeded on first use so a session can be logged immediately instead of typing
- * out a library first. [name, primary, secondary[], equipment].
+ * out a library first. [name, primary, secondary[]].
  */
 export const STARTER_EXERCISES = [
-  ['Bench press', 'chest', ['shoulders', 'arms'], 'barbell'],
-  ['Incline dumbbell press', 'chest', ['shoulders'], 'dumbbell'],
-  ['Cable fly', 'chest', [], 'cable'],
-  ['Chest press machine', 'chest', ['arms'], 'machine'],
-  ['Push-up', 'chest', ['core'], 'bodyweight'],
-  ['Pull-up', 'back', ['arms'], 'bodyweight'],
-  ['Barbell row', 'back', ['arms'], 'barbell'],
-  ['Lat pulldown', 'back', ['arms'], 'cable'],
-  ['Seated cable row', 'back', ['arms'], 'cable'],
-  ['Overhead press', 'shoulders', ['arms'], 'barbell'],
-  ['Lateral raise', 'shoulders', [], 'dumbbell'],
-  ['Cable lateral raise', 'shoulders', [], 'cable'],
-  ['Squat', 'legs', ['core'], 'barbell'],
-  ['Smith machine squat', 'legs', ['core'], 'smith'],
-  ['Deadlift', 'legs', ['back'], 'barbell'],
-  ['Leg press', 'legs', [], 'machine'],
-  ['Romanian deadlift', 'legs', ['back'], 'barbell'],
-  ['Leg curl', 'legs', [], 'machine'],
-  ['Barbell curl', 'arms', [], 'barbell'],
-  ['Cable curl', 'arms', [], 'cable'],
-  ['Triceps pushdown', 'arms', [], 'cable'],
-  ['Plank', 'core', [], 'bodyweight'],
-  ['Hanging leg raise', 'core', [], 'bodyweight'],
-];
-
-/** The default rotation. Two slots, because that is what an A/B split is. */
-export const STARTER_ROUTINES = [
-  { name: 'A — push', order: 0 },
-  { name: 'B — pull and legs', order: 1 },
+  ['Bench press', 'chest', ['shoulders', 'arms']],
+  ['Incline dumbbell press', 'chest', ['shoulders']],
+  ['Cable fly', 'chest', []],
+  ['Chest press machine', 'chest', ['arms']],
+  ['Push-up', 'chest', ['core']],
+  ['Pull-up', 'back', ['arms']],
+  ['Barbell row', 'back', ['arms']],
+  ['Lat pulldown', 'back', ['arms']],
+  ['Seated cable row', 'back', ['arms']],
+  ['Overhead press', 'shoulders', ['arms']],
+  ['Lateral raise', 'shoulders', []],
+  ['Cable lateral raise', 'shoulders', []],
+  ['Squat', 'legs', ['core']],
+  ['Smith machine squat', 'legs', ['core']],
+  ['Deadlift', 'legs', ['back']],
+  ['Leg press', 'legs', []],
+  ['Romanian deadlift', 'legs', ['back']],
+  ['Leg curl', 'legs', []],
+  ['Barbell curl', 'arms', []],
+  ['Cable curl', 'arms', []],
+  ['Triceps pushdown', 'arms', []],
+  ['Plank', 'core', []],
+  ['Hanging leg raise', 'core', []],
 ];
 
 export const DEFAULT_SETTINGS = {
@@ -272,26 +240,20 @@ export function makeOutreach(patch = {}) {
   };
 }
 
-export function makeExercise({
-  name = '',
-  muscle = 'chest',
-  secondary = [],
-  equipment = 'unspecified',
-  status = 'active',
-  cues = '',
-} = {}) {
+/**
+ * A movement. Name, what it trains, and whether it is still in the picker.
+ *
+ * Dropping is the only way out: the id is what every session holds, so a
+ * dropped exercise keeps resolving and the history it appears in stays exactly
+ * as it was.
+ */
+export function makeExercise({ name = '', muscle = 'chest', secondary = [], status = 'active' } = {}) {
   return {
     id: uid('ex'),
     name,
     muscle: MUSCLE_GROUPS.includes(muscle) ? muscle : 'chest',
     secondary: secondary.filter((m) => MUSCLE_GROUPS.includes(m) && m !== muscle),
-    equipment: EQUIPMENT_TYPES.includes(equipment) ? equipment : 'unspecified',
     status: EXERCISE_STATUSES.includes(status) ? status : 'active',
-    dropReason: null,
-    dropNote: '',
-    // Coaching notes. These surface automatically when the exercise is logged,
-    // which is the only moment they are any use.
-    cues,
     createdAt: todayISO(),
   };
 }
@@ -300,32 +262,28 @@ export function makeSet({ reps = null, weight = null } = {}) {
   return { id: uid('set'), reps: reps ?? null, weight: weight ?? null };
 }
 
-export function makeSessionExercise({ exerciseId = null, sets = [], note = '', substitutedFor = null } = {}) {
+export function makeSessionExercise({ exerciseId = null, sets = [], note = '' } = {}) {
   return {
     id: uid('sx'),
     exerciseId,
-    // A substitution keeps both halves: what was meant to happen and what did.
-    substitutedFor,
     sets: [...sets],
-    // Free text on purpose. "no tension in the target muscle" and "first two
-    // sets locking out at the top" are the useful notes, and neither fits a
-    // dropdown.
+    // One free-text note per exercise per session. Pump, tension, form, how it
+    // felt — the useful ones are sentences, so it is not a dropdown.
     note,
   };
 }
 
-export function makeSkippedExercise({ exerciseId = null, reason = 'other', note = '' } = {}) {
+export function makeGymSession(patch = {}) {
   return {
-    id: uid('skip'),
-    exerciseId,
-    reason: SKIP_REASONS.includes(reason) ? reason : 'other',
-    note,
+    id: uid('gym'),
+    date: todayISO(),
+    startTime: null,
+    endTime: null,
+    exercises: [],
+    notes: '',
+    createdAt: nowStamp(),
+    ...patch,
   };
-}
-
-/** A slot in the rotation. Two of these make an A/B split. */
-export function makeRoutine({ name = '', order = 0, exerciseIds = [] } = {}) {
-  return { id: uid('rot'), name, order, exerciseIds: [...exerciseIds], createdAt: todayISO() };
 }
 
 /**
@@ -342,44 +300,6 @@ export function makePainRecord(patch = {}) {
     when: 'during',
     note: '',
     sessionId: null,
-    createdAt: nowStamp(),
-    ...patch,
-  };
-}
-
-export function makeGymSession(patch = {}) {
-  return {
-    id: uid('gym'),
-    routineId: null,
-    date: todayISO(),
-    startTime: null,
-    endTime: null,
-    // Kept explicitly as well as derived from the times, because an imported
-    // logbook often records a duration and no clock times at all.
-    durationMinutes: null,
-    warmup: false,
-    warmupMinutes: null,
-    exercises: [],
-    // A partial session is the normal case, not an error state.
-    skipped: [],
-    notes: '',
-    createdAt: nowStamp(),
-    ...patch,
-  };
-}
-
-export function makeChessGame(patch = {}) {
-  return {
-    id: uid('chess'),
-    date: todayISO(),
-    colour: 'white',
-    result: 'win',
-    venue: 'chess.com',
-    opponentRating: null,
-    url: '',
-    opening: '',
-    // The one required field. A game logged without it isn't logged.
-    lesson: '',
     createdAt: nowStamp(),
     ...patch,
   };
@@ -560,14 +480,12 @@ export function createEmptyState(templates = []) {
     applications: [],
     outreach: [],
     exercises: [],
-    routines: [],
     gymSessions: [],
     painRecords: [],
     greBlocks: [],
     grePhases: [],
     greDays: [],
     greEntries: [],
-    chessGames: [],
     reading: [],
     timeBlocks: [],
   };
@@ -583,14 +501,12 @@ export const COLLECTIONS = [
   'applications',
   'outreach',
   'exercises',
-  'routines',
   'gymSessions',
   'painRecords',
   'greBlocks',
   'grePhases',
   'greDays',
   'greEntries',
-  'chessGames',
   'reading',
   'timeBlocks',
 ];

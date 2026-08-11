@@ -173,36 +173,15 @@ export function search(state, query, { limit = 80 } = {}) {
     });
   }
 
-  for (const game of state?.chessGames ?? []) {
-    push({
-      type: 'chess',
-      id: game.id,
-      title: game.lesson || `${game.result} as ${game.colour}`,
-      context: [game.opening, game.venue].filter(Boolean).join(' · '),
-      snippet: snippet(game.lesson, needle),
-      route: '#/chess/lessons',
-      score: Math.max(
-        score(game.lesson, needle),
-        boost(score(game.opening, needle), 3),
-      ),
-    });
-  }
-
   for (const exercise of state?.exercises ?? []) {
     push({
       type: 'exercise',
       id: exercise.id,
       title: exercise.name,
-      context: [exercise.muscle, exercise.equipment].filter(Boolean).join(' · '),
-      snippet: snippet(exercise.cues, needle),
+      context: [exercise.muscle, ...(exercise.secondary ?? [])].filter(Boolean).join(' · '),
+      snippet: '',
       route: '#/gym/library',
-      score: Math.max(
-        boost(score(exercise.name, needle), 5),
-        // Cues are coaching notes worth finding by what they say, not only by
-        // which exercise they belong to.
-        score(exercise.cues, needle),
-        score(exercise.dropNote, needle),
-      ),
+      score: boost(score(exercise.name, needle), 5),
     });
   }
 

@@ -66,6 +66,7 @@ The second thing it solves: you learn something once, never retrieve it, and it'
 | `- Task` | Task. `-`, `*`, `+` or `1.` all work. |
 | `@45m` | Optional estimate. `@2h`, `@1h30m` and `@90` also parse. |
 | `^2026-09-01` | Optional due date. |
+| a URL | Lifted out of the title onto the task's links. `[label](url)` keeps the label as the title. |
 
 The dialog has a **Copy the prompt for a chat** button. The loop is: describe your project to a chat, paste its answer into Cairn, confirm.
 
@@ -75,7 +76,7 @@ The parser is deliberately strict, because the failure that matters isn't a reje
 - **Counts are self-checked.** Markers found in the text must equal records produced, or the parser refuses rather than passing quietly.
 - **A stage with no done-when blocks the import** and names itself. Chats omit it constantly, and such a stage would be unstartable anyway.
 - **Duplicates are never created by accident.** A thread name you already have gets the new stages appended to it; stage titles that clash are listed before you commit.
-- **Anything inferred is reported** — tasks written straight under a stage get a step called "Tasks", shown as a warning in the preview.
+- **Anything inferred is reported** — tasks written straight under a stage get a step called "Tasks", and a URL lifted out of a title is counted, both shown in the preview before you commit.
 
 Nothing is written until you confirm, and the whole import is one undo.
 
@@ -91,34 +92,30 @@ Nothing is written until you confirm, and the whole import is one undo.
 
 A plan and a record of what happened are two separate blocks with a status, not two time pairs on one. That is what they actually are: an intention written in the morning and an account written afterwards. A block that was never planned can still be logged, a plan that was abandoned stays visible as a plan, and one button turns a plan into the record of having done it. The form does not ask for a date — prev/next already answered that.
 
-**Search** — across everything: tasks, notes, what you hesitated on, chess lessons, bookmark notes.
+**Search** — across everything: tasks, notes, what you hesitated on, bookmark notes.
 
-Weeks run **Sunday to Saturday**, everywhere and without exception — targets, streaks, muscle coverage, the weekly review, the time distribution. It is one constant in `src/core/dates.js`; nothing else takes a week-start argument, so the figures cannot disagree with each other.
+Weeks run **Sunday to Saturday**, everywhere and without exception — targets, streaks, the weekly review, the time distribution. It is one constant in `src/core/dates.js`; nothing else takes a week-start argument, so the figures cannot disagree with each other.
 
 ## The gym
 
 Sessions, not check-marks — *that you went* is not the useful part.
 
-A session records the date, start and end, whether you warmed up and for how long, and the exercises: sets, reps, weight, and a free-text note per exercise. That note is where "good pump", "no tension in the target muscle" and "first two sets locking out at the top" go; it is deliberately not a dropdown, because the useful notes are sentences.
+The tab tracks two things: whether a lift is moving, and whether something hurts. Everything that did not serve one of those was taken out.
 
-Entry is built for a phone between sets. Picking an exercise fills in the sets you did last time, **Repeat set** copies the row above, and the next slot in your A/B rotation arrives already chosen. Most sessions are the last one with two numbers changed.
+A session records the date, start and end, and the exercises: sets, reps, weight, and a free-text note per exercise. That note is where "good pump", "no tension in the target muscle" and "first two sets locking out at the top" go; it is deliberately not a dropdown, because the useful notes are sentences. A second note covers the session as a whole — the warm-up, what was skipped, why it was short. A sentence records all of that better than a set of fields did.
 
-**A partial session is the normal case**, not an error state. What was skipped sits beside what was done, with a reason — machine occupied, ran out of time, pain, chose not to. A substitution keeps both halves: what was meant to happen and what actually did.
+Entry is built for a phone between sets. Picking an exercise fills in the sets you did last time and **Repeat set** copies the row above, so most sessions are the last one with two numbers changed. A bodyweight movement records reps and leaves the weight empty.
 
 ### The exercise library
 
-Exercises are things you maintain, not free text typed per session. Each carries a primary muscle and secondaries, an equipment type — cable, machine, Smith, dumbbell, barbell, bodyweight — a status, and cues that surface automatically the moment you log it.
+Exercises are things you maintain, not free text typed per session. Each carries a name, a primary muscle and secondaries, and a status: active, or dropped.
 
-**Equipment is not cosmetic.** A cable or machine variant can work where the free-weight version of the same movement does not, and the preference view counts that rather than leaving it to be rediscovered every few months: sets done per kind, how many you kept, and how many you dropped *for pain* specifically.
-
-**Dropping asks why**, and keeps disliked, painful and unavailable apart. They are three different problems and lead to three different actions — find a variant, see someone about it, change gym — so they are never collapsed into one "retired". Dropping never rewrites history: the exercise leaves the picker and stays in every session that used it. Deleting one that has been used is refused. Renaming propagates, because a rename is a correction.
+**Dropping never rewrites history.** The exercise leaves the picker and stays in every session that used it, with its sets exactly as they were. Deleting one that has been used is refused and offered as a drop instead. Renaming propagates, because a rename is a correction — which is the point of sessions storing the id rather than the name.
 
 ### The views
 
-- **This week against target** — done, planned, still to do, days left. It says so when the maths no longer works.
-- **Muscle coverage** — the one that decides what today's session should be. The cells with nothing in them are the answer. Direct work is counted apart from assistance: three pressing days do not make an arms day.
-- **Gaps** — muscle groups whose only exercises are dropped or untried. A group stops being trained without anything ever announcing it, unless something does.
-- **Progression** — one exercise over time. A bodyweight movement is tracked by reps, since there is no load to plot.
+- **This week against target** — done, target, still to do, days left, and a strip of the days you trained on.
+- **Progression** — one exercise over time, with the direction it is going. A bodyweight movement is tracked by reps, since there is no load to plot.
 - **Pain** — below.
 - **History** — every session, reopenable.
 
@@ -126,13 +123,7 @@ Exercises are things you maintain, not free text typed per session. Each carries
 
 A structured record, not a note. The only question worth asking of it — *does this recur across different exercises, or is it isolated to one?* — cannot be answered by reading paragraphs. One is about the body, the other is about the movement, and they lead to opposite actions.
 
-So pain records a location, the exercise, whether it happened during or after, and the date. The view groups by location and says explicitly when a location has hurt on two or more distinct exercises. Exportable on its own as a dated CSV or markdown table.
-
-### Bringing in an existing logbook
-
-**Gym → Import logbook** takes a paste of the markdown log you have been keeping and extracts the library table, the dated sessions with their durations and warm-ups, the sets in whatever notation you used (`3×10`, `10, 10, 8 @ 40kg`, `12 @ bw`), what was skipped and why, the per-exercise feedback, the pain table, the cues and the dropped list.
-
-It is lenient where the outline parser is strict — the source is a year of handwriting and there is no second copy — but honest in the same way. Every line either becomes part of a record or is **reported by number and verbatim** as something it could not interpret. Anything it guessed, like reading "chest" off the name "cable fly", is marked as a guess and correctable in the preview. Nothing is written until you commit, and the whole import is one undo.
+So pain records a location, the exercise, whether it happened during or after, and the date. It is logged from inside the session, at the point it happens. The view groups by location, lists every exercise and date attached to each one, and says explicitly when a location has hurt on two or more distinct exercises. Exportable on its own as a dated CSV or markdown table.
 
 ## GRE
 
@@ -170,14 +161,6 @@ Not a score. Two numbers:
 
 Plus a daily streak for the vocab block, since it is the one that breaks if skipped, and a countdown of days left in the window.
 
-## Chess
-
-A row per game — date, colour, result, where, opponent rating, link, opening — and one required field: **what went wrong, or what you learned**. One line. A game logged without it isn't logged, and the editor won't save it.
-
-That field is the whole point. Over fifty games the lines cluster, and the clusters are the study list — the same mechanism as the hesitation notes on the question banks. The **Lessons** page collects every line in one place and counts the terms that turn up in more than one game, so five separate notes about hanging a piece read as one problem.
-
-There is no board, no engine, no move-by-move analysis and no PGN import. Chess.com and Lichess already do all of that better.
-
 ## Reading
 
 Drop in a PDF and read it here.
@@ -213,7 +196,7 @@ Everything except book files lives in `localStorage` under `cairn.state`, in thi
 
 **Export periodically.** Clearing site data deletes everything. Safari also evicts `localStorage` after about a week of not visiting the site.
 
-Capacity is not a practical concern *for the records*: twelve heavy threads with ~1,700 tasks, 300 questions with 1,200 attempts, hundreds of notes and applications and two years of habit logs comes to about 1.2 MB — roughly a quarter of a typical 5 MB budget. Settings shows the live figure, warns at 80%, and if a write is ever refused your change stays on screen with a prompt to export rather than being lost. Book files are the exception and are measured separately, in Reading → Storage.
+Capacity is not a practical concern *for the records*: twelve heavy threads with ~1,700 tasks, 300 questions with 1,200 attempts, hundreds of notes and applications and two years of gym sessions comes to about 1.2 MB — roughly a quarter of a typical 5 MB budget. Settings shows the live figure, warns at 80%, and if a write is ever refused your change stays on screen with a prompt to export rather than being lost. Book files are the exception and are measured separately, in Reading → Storage.
 
 **Import validates before it touches anything.** Structural problems (a collection that isn't an array, a duplicate id, an unknown schema version) refuse the file with an explanation. Field-level problems (an impossible due date, an unknown thread type) are repaired and reported individually. No record is ever dropped silently, older files migrate forward automatically, and an import is undoable like anything else.
 
@@ -248,9 +231,9 @@ npm run test:e2e   # Playwright
 npm run test:all
 ```
 
-**Unit tests** cover logic, not interface: stage unlocking including reordering and force-unlock, progress rollup, the spaced-repetition scheduler including resets and retirement, stall detection, pipeline needs-action rules, local-time date arithmetic and the Sunday week boundary, planned-versus-logged time blocks and the activity model, gym coverage, gaps, equipment preference and pain grouping, the logbook parser against every set notation it claims to read, GRE day shapes, gates, cold retrieval and the portable-move count, chess scoring and lesson clustering, reading positions and filename parsing, persistence with undo/quota/multi-tab conflicts, the outline parser against adversarial input, and the import validator against malformed files.
+**Unit tests** cover logic, not interface: stage unlocking including reordering and force-unlock, progress rollup, the spaced-repetition scheduler including resets and retirement, stall detection, pipeline needs-action rules, local-time date arithmetic and the Sunday week boundary, planned-versus-logged time blocks and the activity model, gym weeks, session totals, per-exercise progression and pain grouping, every schema migration including the fields folded into notes rather than dropped, GRE day shapes, gates, cold retrieval and the portable-move count, reading positions and filename parsing, persistence with undo/quota/multi-tab conflicts, the outline parser against adversarial input, and the import validator against malformed files.
 
-**End-to-end tests** cover the flows that matter: completing a stage unlocks the next and only the next; a failed attempt schedules correctly and appears in the queue on the right day; export then import round-trips exactly; a gym session records what was done and lights up only the muscles it trained; a GRE entry cannot be saved without its portable move, and the retrieval queue stays cold until a result is recorded; a chess game cannot be logged without its lesson line; a PDF imports, opens at the last page, and keeps its bookmarks across a reload. Plus the edge cases — a due task inside a locked stage staying out of "needs action", a dropped exercise leaving old sessions intact, a book whose file is missing, archiving instead of deleting, a full storage quota, a second tab writing, and the narrow-screen layout.
+**End-to-end tests** cover the flows that matter: completing a stage unlocks the next and only the next; a failed attempt schedules correctly and appears in the queue on the right day; export then import round-trips exactly; a gym session records what was done and the week counts it against the target; a GRE entry cannot be saved without its portable move, and the retrieval queue stays cold until a result is recorded; a PDF imports, opens at the last page, and keeps its bookmarks across a reload. Plus the edge cases — a due task inside a locked stage staying out of "needs action", a dropped exercise leaving old sessions intact, a book whose file is missing, archiving instead of deleting, a full storage quota, a second tab writing, and the narrow-screen layout.
 
 The reading tests use two PDF fixtures in `tests/e2e/fixtures`, generated by `npm run fixtures` — one that declares a title and author, and one that declares nothing, which is the case the importer actually has to handle.
 
