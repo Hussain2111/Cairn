@@ -1,12 +1,12 @@
-// Settings: theme, scheduling and detection windows, export and import,
-// archived stages, and the storage meter.
+// Settings: theme, scheduling windows, export and import, and the storage
+// meter.
 
 import { el, tag, empty, confirm, toast, downloadFile, openDialog } from '../ui.js';
 import { pageHead, statTile, editRecord } from './shared.js';
-import { pruneOrphans } from '../books-db.js';
 import { normaliseIntervals } from '../../core/srs.js';
+import { COLLECTIONS } from '../../core/schema.js';
 import { summarise } from '../../core/validate.js';
-import { formatDate, stampToDate, formatLongDate } from '../../core/dates.js';
+import { formatLongDate } from '../../core/dates.js';
 
 export function title() {
   return 'Settings';
@@ -42,9 +42,6 @@ export function render(ctx) {
           }
           ctx.commit('set intervals', () => { settings.srsIntervals = parsed; }, { undoable: false });
         }, 'text'),
-        numberField('Stall after (days)', settings.stallDays, (value) => {
-          ctx.commit('set stall window', () => { settings.stallDays = Math.max(1, Number(value) || 14); }, { undoable: false });
-        }),
         numberField('Pipeline idle after (days)', settings.pipelineIdleDays, (value) => {
           ctx.commit('set idle window', () => { settings.pipelineIdleDays = Math.max(1, Number(value) || 14); }, { undoable: false });
         }),
@@ -78,7 +75,7 @@ export function render(ctx) {
         statTile(summary.threads, 'threads'),
         statTile(summary.tasks, 'tasks'),
         statTile(summary.questions, 'questions'),
-        statTile(summary.notes, 'notes'),
+        statTile(summary.reading, 'books'),
         statTile(summary.applications + summary.outreach, 'pipeline records'),
         statTile(`${(bytes / 1024).toFixed(0)} KB`, 'stored', bytes > ASSUMED_QUOTA_BYTES * 0.8 ? 'amber' : ''),
       ]),
@@ -105,16 +102,7 @@ export function render(ctx) {
       el('p.field__hint', {
         text: 'Everything lives in this browser. Clearing site data deletes it — export regularly. Import validates the file first and tells you exactly what it found.',
       }),
-      // The one thing the JSON does not contain, said before it is missed
-      // rather than after.
-      summary.reading
-        ? el('p.field__hint', {
-            text: `The export does not include the ${summary.reading} book file(s) on your shelf — a PDF library runs to hundreds of megabytes and does not belong in a JSON file. It does carry every book\'s title, your place in it and its bookmarks, so importing the PDFs again reattaches them. Reading › Storage has "Save every book file" for getting the files themselves back out.`,
-          })
-        : null,
     ]),
-
-    ctx.state.archivedStages.length ? archivedSection(ctx) : null,
 
     section('Danger zone', [
       el('button.btn.btn--danger', {
@@ -123,7 +111,7 @@ export function render(ctx) {
         onclick: async () => {
           const answer = await confirm({
             title: 'Delete all data?',
-            message: 'Every thread, note, question and record will be removed from this browser. Export first if you might want it back. This can be undone until you close the tab.',
+            message: 'Every thread, question and record will be removed from this browser. Export first if you might want it back. This can be undone until you close the tab.',
             confirmLabel: 'Delete everything',
             extraLabel: 'Export first',
           });
@@ -132,27 +120,8 @@ export function render(ctx) {
             return;
           }
           if (answer !== 'confirm') return;
-          // The book files live outside the state object, so clearing the
-          // state would otherwise leave megabytes of orphaned PDFs behind with
-          // nothing left in the interface to reach them.
-          const files = await pruneOrphans([]);
-          if (files) toast(`${files} book file(s) deleted as well.`);
           ctx.commit('delete all data', (state) => {
-            state.threads.length = 0;
-            state.notes.length = 0;
-            state.questions.length = 0;
-            state.applications.length = 0;
-            state.outreach.length = 0;
-            state.exercises.length = 0;
-            state.gymSessions.length = 0;
-            state.painRecords.length = 0;
-            state.greBlocks.length = 0;
-            state.grePhases.length = 0;
-            state.greDays.length = 0;
-            state.greEntries.length = 0;
-            state.reading.length = 0;
-            state.timeBlocks.length = 0;
-            state.archivedStages.length = 0;
+            for (const key of COLLECTIONS) state[key].length = 0;
           });
         },
       }),
@@ -179,51 +148,6 @@ function numberField(label, value, onCommit, type = 'number') {
   const control = el('input.input', { type, value: String(value ?? '') });
   control.addEventListener('change', () => onCommit(control.value));
   return el('label.field', [el('span.field__label', { text: label }), control]);
-}
-
-function archivedSection(ctx) {
-  return section('Archived stages', [
-    el('p.field__hint', { text: 'Stages archived instead of deleted. Their completed work is still in your data.' }),
-    ...ctx.state.archivedStages.map((entry, index) =>
-      el('div.row.row--between', [
-        el('div', [
-          el('strong.break', { text: entry.stage.title }),
-          el('div.section__meta', {
-            text: `${entry.threadName ?? 'unknown thread'} · archived ${formatDate(stampToDate(entry.archivedAt) ?? '')}`,
-          }),
-        ]),
-        el('div.row', [
-          el('button.btn.btn--sm', {
-            type: 'button',
-            text: 'Restore',
-            onclick: () => {
-              const thread = ctx.state.threads.find((t) => t.id === entry.threadId);
-              if (!thread) {
-                toast('The thread it belonged to is gone. Restore it into another thread by importing a backup.', { variant: 'danger' });
-                return;
-              }
-              ctx.commit('restore stage', (state) => {
-                thread.stages.push(entry.stage);
-                state.archivedStages.splice(index, 1);
-              });
-            },
-          }),
-          el('button.btn.btn--ghost.btn--sm', {
-            type: 'button',
-            text: 'Delete',
-            onclick: async () => {
-              const answer = await confirm({
-                title: 'Delete this archived stage?',
-                message: `"${entry.stage.title}" will be gone for good, apart from undo.`,
-                confirmLabel: 'Delete',
-              });
-              if (answer !== 'confirm') return;
-              ctx.commit('delete archived stage', (state) => state.archivedStages.splice(index, 1));
-            },
-          }),
-        ]),
-      ])),
-  ]);
 }
 
 // --- import -----------------------------------------------------------------
@@ -306,7 +230,7 @@ export function renderImportReport(report) {
         tag(`${report.summary.stages} stages`),
         tag(`${report.summary.tasks} tasks`),
         tag(`${report.summary.questions} questions`),
-        tag(`${report.summary.notes} notes`),
+        tag(`${report.summary.reading} books`),
         tag(`${report.summary.applications} applications`),
         tag(`${report.summary.outreach} outreach`),
         tag(`${report.summary.exercises} exercises`),

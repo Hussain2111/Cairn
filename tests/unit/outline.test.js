@@ -317,13 +317,13 @@ test('a task with no title after markers are stripped is refused', () => {
 
 test('a new thread name plans as a creation', () => {
   const parsed = parseOutline(GOOD);
-  const plan = planImport(parsed, createEmptyState([]));
+  const plan = planImport(parsed, createEmptyState());
   assert.equal(plan[0].action, 'create');
   assert.equal(plan[0].existing, null);
 });
 
 test('an existing thread name appends instead of duplicating', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   state.threads.push(makeThread({ name: 'Compiler project' }));
 
   const plan = planImport(parseOutline(GOOD), state);
@@ -333,7 +333,7 @@ test('an existing thread name appends instead of duplicating', () => {
 });
 
 test('appending flags stage titles the thread already has', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   const thread = makeThread({ name: 'Compiler project' });
   thread.stages.push(makeStage({ title: 'Lexer', doneWhen: 'already here' }));
   state.threads.push(thread);
@@ -344,7 +344,7 @@ test('appending flags stage titles the thread already has', () => {
 });
 
 test('thread matching ignores case and surrounding space', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   state.threads.push(makeThread({ name: 'compiler PROJECT' }));
   assert.equal(planImport(parseOutline(GOOD), state)[0].action, 'append');
 });

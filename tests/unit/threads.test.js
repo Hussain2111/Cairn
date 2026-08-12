@@ -10,12 +10,12 @@ import {
   nextTask,
   upNext,
   moveStage,
-  threadStall,
-  stalledThreads,
+  isActive,
+  activeThreads,
+  lastCompletionDate,
   actionableDueTasks,
   canStartStage,
   isStageActionable,
-  lastCompletionDate,
 } from '../../src/core/threads.js';
 import { makeThread, makeStage, makeStep, makeTask } from '../../src/core/schema.js';
 import { addDays, todayISO } from '../../src/core/dates.js';
@@ -150,11 +150,58 @@ test('moving an incomplete stage to the front locks the stages behind it', () =>
   assert.equal(isStageUnlocked(t, 2), true);
 });
 
-test('moveStage reports the before and after states', () => {
-  const t = thread([stage('A', [{ done: true }]), stage('B', [{ done: false }])]);
-  const { before, after } = moveStage(t, 0, 1);
-  assert.deepEqual(before, ['complete', 'available']);
-  assert.deepEqual(after, ['available', 'complete']);
+test('moveStage names both what a move locks and what it unlocks', () => {
+  // A is finished, so B is workable and C is waiting behind B. Pulling C above
+  // B swaps which of them you are allowed to work in — the whole reason order
+  // is meaningful, and invisible unless something says so.
+  const t = thread([
+    stage('A', [{ done: true }]),
+    stage('B', [{ done: false }]),
+    stage('C', [{ done: false }]),
+  ]);
+  assert.deepEqual([0, 1, 2].map((i) => stageState(t, i)), ['complete', 'available', 'locked']);
+
+  const { locked, unlocked } = moveStage(t, 2, 1);
+  assert.deepEqual(t.stages.map((s) => s.title), ['A', 'C', 'B']);
+  assert.deepEqual(locked.map((s) => s.title), ['B'], 'B now sits behind an unfinished C');
+  assert.deepEqual(unlocked.map((s) => s.title), ['C'], 'C now follows the finished A');
+});
+
+test('moving a completed stage up locks what used to follow it', () => {
+  const t = thread([
+    stage('B', [{ done: false }]),
+    stage('A', [{ done: true }]),
+    stage('C', [{ done: false }]),
+  ]);
+  assert.equal(stageState(t, 2), 'available', 'C follows the completed A');
+
+  const { locked, unlocked } = moveStage(t, 1, 0);
+  assert.deepEqual(t.stages.map((s) => s.title), ['A', 'B', 'C']);
+  assert.deepEqual(locked.map((s) => s.title), ['C'], 'C now sits behind the unfinished B');
+  assert.deepEqual(unlocked.map((s) => s.title), []);
+});
+
+test('a completed stage is never reported as locked, wherever it lands', () => {
+  const t = thread([
+    stage('open', [{ done: false }]),
+    stage('finished', [{ done: true }]),
+  ]);
+  const { locked } = moveStage(t, 1, 0);
+  assert.deepEqual(locked.map((s) => s.title), [], 'completion outranks position');
+});
+
+test('a move that changes nothing reports nothing', () => {
+  const t = thread([stage('A', [{ done: false }]), stage('B', [{ done: false }])]);
+  const { locked, unlocked } = moveStage(t, 0, 0);
+  assert.deepEqual(locked, []);
+  assert.deepEqual(unlocked, []);
+});
+
+test('moveStage on an index that does not exist is a no-op rather than a crash', () => {
+  const t = thread([stage('A', [{ done: false }])]);
+  const result = moveStage(t, 5, 0);
+  assert.deepEqual(result.locked, []);
+  assert.equal(t.stages.length, 1);
 });
 
 // --- rollup -----------------------------------------------------------------
@@ -211,11 +258,11 @@ test('next task explains itself when there is nothing to show', () => {
   assert.equal(nextTask(thread([stage('A')])).blocked, 'no-tasks');
 });
 
-test('up next returns one line per active thread and skips archived ones', () => {
+test('up next returns one line per active thread and skips finished ones', () => {
   const state = {
     threads: [
       thread([stage('A', [{ title: 'live', done: false }])], { name: 'Live' }),
-      thread([stage('A', [{ title: 'gone', done: false }])], { name: 'Archived', archived: true }),
+      thread([stage('A', [{ title: 'gone', done: false }])], { name: 'Finished', status: 'done' }),
     ],
   };
   const rows = upNext(state);
@@ -223,60 +270,41 @@ test('up next returns one line per active thread and skips archived ones', () =>
   assert.equal(rows[0].task.title, 'live');
 });
 
-// --- stall detection --------------------------------------------------------
+// --- active and done --------------------------------------------------------
 
-test('a thread with no completion in the stall window is flagged', () => {
-  const today = '2026-08-07';
-  const t = thread([stage('A', [{ done: true, doneAt: '2026-07-01T10:00:00' }, { done: false }])]);
-  const stall = threadStall(t, { today, days: 14 });
-  assert.equal(stall.stalled, true);
-  assert.equal(stall.idleDays, 37);
-  assert.equal(stall.lastCompletion, '2026-07-01');
+test('a thread is active unless it has been marked done', () => {
+  assert.equal(isActive(thread([], {})), true, 'a thread with no status set is active');
+  assert.equal(isActive(thread([], { status: 'active' })), true);
+  assert.equal(isActive(thread([], { status: 'done' })), false);
 });
 
-test('recent completion clears the stall flag', () => {
-  const today = '2026-08-07';
-  const t = thread([stage('A', [{ done: true, doneAt: '2026-08-05T10:00:00' }, { done: false }])]);
-  assert.equal(threadStall(t, { today, days: 14 }).stalled, false);
-});
-
-test('a thread that never completed anything stalls from its creation date', () => {
-  const today = '2026-08-07';
-  const t = thread([stage('A', [{ done: false }])], { createdAt: '2026-06-01T09:00:00' });
-  const stall = threadStall(t, { today, days: 14 });
-  assert.equal(stall.stalled, true);
-  assert.equal(stall.everCompleted, false);
-});
-
-test('finished and archived threads never stall', () => {
-  const today = '2026-08-07';
-  const done = thread([stage('A', [{ done: true, doneAt: '2026-01-01T10:00:00' }])]);
-  assert.equal(threadStall(done, { today, days: 14 }).stalled, false);
-
-  const archived = thread([stage('A', [{ done: false }])], { archived: true, createdAt: '2026-01-01T09:00:00' });
-  assert.equal(threadStall(archived, { today, days: 14 }).stalled, false);
-});
-
-test('stalled threads are returned worst-first', () => {
-  const today = '2026-08-07';
+test('done threads are left out of the active list and of up next', () => {
   const state = {
-    settings: { stallDays: 14 },
     threads: [
-      thread([stage('A', [{ done: false }])], { name: 'recent', createdAt: '2026-07-20T09:00:00' }),
-      thread([stage('A', [{ done: false }])], { name: 'ancient', createdAt: '2026-01-01T09:00:00' }),
+      thread([stage('A', [{ title: 'live', done: false }])], { name: 'Working on it' }),
+      thread([stage('A', [{ title: 'shelved', done: false }])], { name: 'Finished', status: 'done' }),
     ],
   };
-  const stalled = stalledThreads(state, { today });
-  assert.deepEqual(stalled.map((s) => s.thread.name), ['ancient', 'recent']);
+  assert.deepEqual(activeThreads(state).map((t) => t.name), ['Working on it']);
+  assert.deepEqual(upNext(state).map((row) => row.thread.name), ['Working on it']);
 });
 
-test('lastCompletionDate reads the latest completion across the tree', () => {
-  const t = thread([
-    stage('A', [{ done: true, doneAt: '2026-03-01T09:00:00' }]),
-    stage('B', [{ done: true, doneAt: '2026-05-09T09:00:00' }]),
-  ]);
-  assert.equal(lastCompletionDate(t), '2026-05-09');
+test('a due task in a done thread is not actionable', () => {
+  const state = {
+    threads: [thread([stage('A', [{ title: 'overdue', done: false, due: '2026-08-01' }])], { status: 'done' })],
+  };
+  assert.equal(actionableDueTasks(state, { today: '2026-08-12' }).length, 0);
 });
+
+test('the last completion date is the latest one, not the last in tree order', () => {
+  const t = thread([
+    stage('A', [{ done: true, doneAt: '2026-08-05T09:00:00' }]),
+    stage('B', [{ done: true, doneAt: '2026-07-01T09:00:00' }]),
+  ]);
+  assert.equal(lastCompletionDate(t), '2026-08-05');
+  assert.equal(lastCompletionDate(thread([stage('A', [{ done: false }])])), null);
+});
+
 
 // --- due tasks --------------------------------------------------------------
 

@@ -26,13 +26,13 @@ The second thing it solves: you learn something once, never retrieve it, and it'
 
 **Friday: open the Weekly review.** It's generated, not written. What completed, what didn't move, what you hesitated on, where the hours actually went. Copy it as markdown if you want it elsewhere.
 
-**When something has been quiet for two weeks, Cairn says so** on Today and in the sidebar. That's the failure mode this tool exists to catch: threads dying silently while you feel busy.
-
 ## The three ideas worth understanding
 
 **Done-when is mandatory.** Every stage needs a written, checkable completion condition before you can work in it. Not "improve the parser" — "every token type has a passing test and the fuzzer runs clean for 10k inputs." It's what stops a stage expanding forever, and the app refuses to let you tick into a stage without one.
 
 **Locked stages stay visible.** You can read the whole plan; you just can't work ahead. There's a manual force-unlock for when real life goes out of order, and a force-complete for when a stage is good enough — both are recorded as overrides so the weekly review can be honest about them.
+
+**A thread is active or it is done.** There is no archive and no soft delete. Marking a thread done keeps its history and takes it off Today; deleting it deletes it, with undo as the only way back. Archiving was a way of keeping something around without deciding about it, and the deciding is the point.
 
 **Unlock state is derived, never stored.** Completion and locking are recomputed from the tasks on every read. That's why reordering stages is safe: move one and everything recomputes from its new position, with no stale flag left behind to lie to you later.
 
@@ -84,15 +84,13 @@ Nothing is written until you confirm, and the whole import is one undo.
 
 **Question banks** — SQL, LeetCode, GRE. Each attempt records the date, whether you solved it unaided, minutes taken, and what you hesitated on. That last field is the one worth re-reading.
 
-**Notes** — markdown, attachable to any thread, stage, step or task, with templates for daily logs, stage retrospectives, question write-ups, application records and weekly reviews. Write your own too.
+**Notes** — a text field on every thread, stage, step, task, book and gym session. There is no separate Notes tab: notes belong to the thing they are about, and a second place to write meant two places to look.
 
-**Pipelines** — applications and outreach, with the resume version you sent, next actions, and a flag for anything that hasn't moved in a fortnight.
+**Pipelines** — applications and outreach, with the resume version you sent, next actions, and a flag for anything that hasn't moved in a fortnight. Applications can be **imported from a spreadsheet** — see below.
 
-**Time blocking** — plan the day, record what actually happened, see the weekly distribution. A block points at an *activity*: any thread, or one of the standing areas — the gym, GRE, practice problems, reading, applications — so a week adds up to a week rather than to the part that happened to be a project.
+**Time blocking** — plan the day, record what actually happened, see the weekly distribution. A block points at an *activity*: any thread, or one of the standing areas — the gym, practice problems, reading, applications — so a week adds up to a week rather than to the part that happened to be a project.
 
 A plan and a record of what happened are two separate blocks with a status, not two time pairs on one. That is what they actually are: an intention written in the morning and an account written afterwards. A block that was never planned can still be logged, a plan that was abandoned stays visible as a plan, and one button turns a plan into the record of having done it. The form does not ask for a date — prev/next already answered that.
-
-**Search** — across everything: tasks, notes, what you hesitated on, bookmark notes.
 
 Weeks run **Sunday to Saturday**, everywhere and without exception — targets, streaks, the weekly review, the time distribution. It is one constant in `src/core/dates.js`; nothing else takes a week-start argument, so the figures cannot disagree with each other.
 
@@ -125,55 +123,52 @@ A structured record, not a note. The only question worth asking of it — *does 
 
 So pain records a location, the exercise, whether it happened during or after, and the date. It is logged from inside the session, at the point it happens. The view groups by location, lists every exercise and date attached to each one, and says explicitly when a location has hurt on two or more distinct exercises. Exportable on its own as a dated CSV or markdown table.
 
-## GRE
+## Getting applications in without retyping them
 
-A fixed daily programme with an end date, which is why it does not fit the thread model and has its own tab.
+**Pipelines → Import spreadsheet.** A CSV or an XLSX becomes applications, with the same contract the outline importer has: everything is shown before anything is written.
 
-**Every day is a set of blocks** — retrieval, concept, deliberate problems, timed, vocab, verbal, log consolidation — each with a duration and rules about when it appears. Retrieval is always drawn first and does not appear until day four, because there is nothing to retrieve before then. Vocab runs every single day, checkpoint days included. Blocks that carry a topic show *today's assigned topic*, not a generic label. A checkpoint day replaces the normal shape, keeping only what runs every day.
+**Your headers are yours.** "Company Name", "Position", "Where I found it" — Cairn reads the header row, proposes a mapping, and marks the loose matches as *guessed*. Every field has a dropdown pointing at whichever column you say, and the preview updates as you change them. Company and role are required, because they are what identifies an application; the import stays disabled until both are pointed at something.
 
-**None of that plan is in the source.** Which days exist, which phase each belongs to, which blocks run when and each day's topics are pasted in and live in your data — a programme with an end date will be rewritten, and a plan compiled into the code cannot be. The block definitions themselves are a template you can edit.
+**Nothing is dropped in silence.** A row with the wrong number of cells is kept and reported by line number. A row with neither a company nor a role is listed with its contents, so you can see what it was. Every repair is named: a status Cairn does not have becomes "applied" *and* the original wording goes into the notes; an unrecognised source becomes "other" the same way.
 
-**Phases have gates:** a module number that has to be reached by a given day. Progress shows against it, and a gate whose day has passed unmet is flagged as **missed** rather than softened into "behind" — missing one is the signal to change the plan, not to push on.
+**An ambiguous date is refused rather than guessed.** `03/04/2026` is the third of April in most of the world and the fourth of March in the United States. Cairn will not pick one — it reports the row and tells you to format that column as `YYYY-MM-DD`. `25/12/2026` is read, because 25 cannot be a month. In an XLSX, dates are read from the cell's *number format* rather than by looking at the number: a date in a spreadsheet is a count of days since 1899-12-30 that happens to render as a date, and guessing would silently turn one into another.
 
-### The problem log
+**Duplicates are detected, against the app and against the file.** Same company and role, or same link. Matching rows are shown as "already here" and left out, so importing the same sheet twice does not double your pipeline.
 
-Four fields per problem:
+Nothing is written until you press Import, and the whole import is one undo.
+
+**There is no Google Sheets button**, and the dialog says why rather than leaving you to wonder: connecting to Sheets needs a server to hold OAuth credentials, and Cairn has no server. Fetching a published sheet cross-origin is fragile enough that it would break without warning. Sheets exports to CSV in two clicks, which this reads.
+
+## Questions, and what you take from them
+
+Three banks — SQL, LeetCode, GRE — one scheduler, one place. There was a separate GRE tab that scheduled study days as well as logging problems; GregMat's plans already schedule the days, so the programme went and only the logging is left. Logging questions in two places was one place too many.
+
+### The extraction
+
+Every question, on every bank, carries four fields:
 
 1. What it gave and what it asked, in your own words, one line
 2. What you did
 3. Where it broke — or, if you got it right, what the faster route was
 4. **The portable move**, roughly six words
 
-Field four is mandatory. An entry without it is not saved, with an explanation rather than a silent allowance: if you cannot write it, the extraction did not happen. It has to be a rule about problems in general, not about that one — the form says so, with one good example and one bad one.
+The fourth is the point, and it is the only one with a rule attached: **once you have started an extraction, you cannot save it without one.** It has to be about problems in general, not about that one — the form says so, with a good example and a bad one. If you cannot write it, the extraction has not happened.
+
+Started, rather than always: a question can be added before it has been attempted, and an empty extraction on an unattempted question is the honest state. What is refused is the half-done one — three fields describing a mistake and no rule taken from it.
+
+It is offered the moment it can actually be written, which is straight after a miss. Offered, not imposed: the toast that reports the miss carries an **Extract** button. A dialog that opens itself on every wrong answer stops being a prompt and becomes a toll.
+
+The move then reads on the question's own row, and on the review card when the question comes back — so what you take from a question is in front of you the next time you meet it.
 
 Correct answers are logged too. A right answer reached the slow way is a miss you did not notice.
 
-### Retrieval
-
-Each entry schedules a cold re-attempt at +3 days and again at +10, using the same spaced-repetition scheduler as the question banks with a different interval chain. **The queue shows you the problem reference and nothing else** — not what you wrote about it — until you record a result. Anything else is recognition, not retrieval.
-
-### The audit
-
-Not a score. Two numbers:
-
-- **The share of misses caused by concept gaps, per phase**, so early phases can be set against later ones. The share is of misses rather than of everything logged, since correct answers are in the log too and would dilute it.
-- **Portable moves that fired again** — a move written for one problem applying to a later, unseen one. When you log an entry, the form asks whether an earlier move applied here and links the two. That count, over time, is the real output of the whole thing, so it sits at the top of the page.
-
-Plus a daily streak for the vocab block, since it is the one that breaks if skipped, and a countdown of days left in the window.
-
 ## Reading
 
-Drop in a PDF and read it here.
+A list. Cairn does not open books.
 
-Cairn reads the title, author and page count out of the file, falls back to the filename when the metadata is empty — which it usually is — and says which fields it guessed so you can correct them before anything is saved. The first page is rendered as a cover, and the library is a shelf of covers rather than a list of rows.
+Each one is a title, an author and a status — **reading**, **want to read**, **finished** — plus three optional fields: the page you are on, a rating out of five once you have finished, and notes.
 
-Opening a book opens it in the app at the last page you were on. Page navigation, jump to a page, arrow keys, and the position saves on every turn. **Bookmarks** take an optional note and list per book, and each one jumps back to its page. Books you only own on paper can still be tracked by hand.
-
-**Where the bytes live.** PDFs are far too large for `localStorage`, so the files go in IndexedDB and the record — title, position, bookmarks — stays in the main store with everything else. The consequence is stated wherever it matters rather than discovered later:
-
-- **A JSON export does not contain your PDFs.** It carries the shelf, your place in every book and every bookmark. It does not carry hundreds of megabytes of files. Reading → Storage has **Save every book file** for getting those back out; the two together are the whole library.
-- After importing a backup on another device, books show as **"no file on this device"** with a button to find the PDF again. Reattaching restores the reader with your place and bookmarks untouched.
-- Reading → Storage shows what the library is using and what share of the browser's allowance that is. If an import would exceed it, the import is refused with an explanation and **nothing is added** — no half-shelved book with no file behind it.
+There used to be a PDF importer and a reader here: covers rendered from the first page, bookmarks, a page-turning interface, the file bytes in IndexedDB and a vendored PDF engine to drive it. It went, because reading does not happen on a laptop. What it cost while it existed — an export that could not contain your library, books showing as "no file on this device" after restoring a backup on another machine, a storage budget to explain — all of that went with it.
 
 ## How the scheduler works
 
@@ -190,13 +185,13 @@ The attempt dialog tells you what the scheduler will do *before* you commit to i
 
 ## Your data
 
-Everything except book files lives in `localStorage` under `cairn.state`, in this browser, on this device. The PDFs live in IndexedDB under `cairn.books`. No account, no server, no telemetry. Nothing is ever sent anywhere — which also means **sharing the app's URL shares the app, not your data**; anyone who opens it gets an empty Cairn.
+Everything lives in `localStorage` under `cairn.state`, in this browser, on this device. No account, no server, no telemetry. Nothing is ever sent anywhere — which also means **sharing the app's URL shares the app, not your data**; anyone who opens it gets an empty Cairn.
 
 **It does not sync.** Your laptop and your phone are independent copies. To move between them: Settings → **Export JSON**, get the file across, Settings → **Import**. Use *Import and merge* if you've added things on both sides — it keeps both and skips records it already has.
 
 **Export periodically.** Clearing site data deletes everything. Safari also evicts `localStorage` after about a week of not visiting the site.
 
-Capacity is not a practical concern *for the records*: twelve heavy threads with ~1,700 tasks, 300 questions with 1,200 attempts, hundreds of notes and applications and two years of gym sessions comes to about 1.2 MB — roughly a quarter of a typical 5 MB budget. Settings shows the live figure, warns at 80%, and if a write is ever refused your change stays on screen with a prompt to export rather than being lost. Book files are the exception and are measured separately, in Reading → Storage.
+Capacity is not a practical concern: twelve heavy threads with ~1,700 tasks, 300 questions with 1,200 attempts, hundreds of applications and two years of gym sessions comes to about 1.2 MB — roughly a quarter of a typical 5 MB budget. Settings shows the live figure, warns at 80%, and if a write is ever refused your change stays on screen with a prompt to export rather than being lost.
 
 **Import validates before it touches anything.** Structural problems (a collection that isn't an array, a duplicate id, an unknown schema version) refuse the file with an explanation. Field-level problems (an impossible due date, an unknown thread type) are repaired and reported individually. No record is ever dropped silently, older files migrate forward automatically, and an import is undoable like anything else.
 
@@ -206,9 +201,9 @@ Every calendar date comes from local time, never `toISOString()`. A review due t
 
 ## Keyboard
 
-`t` Today · `r` Threads · `q` Questions · `p` Pipelines · `w` Weekly review · `/` Search · `a` add a task · `x` tick the focused task · `j`/`k` move between tasks · `e` export · `⌘Z`/`Ctrl+Z` undo · `?` the full list
+`⌘Z`/`Ctrl+Z` undo · `⇧⌘Z`/`Ctrl+Y` redo.
 
-In the reader, `←`/`→` turn the page.
+That is the whole list. There was a set of single-key navigation shortcuts and a `?` cheat sheet to remember them by; they went, because a shortcut you have to look up is slower than the link it replaces. Undo stayed: it is not a shortcut for something on screen, it is the only way to reverse a destructive action.
 
 ## Running it yourself
 
@@ -231,11 +226,9 @@ npm run test:e2e   # Playwright
 npm run test:all
 ```
 
-**Unit tests** cover logic, not interface: stage unlocking including reordering and force-unlock, progress rollup, the spaced-repetition scheduler including resets and retirement, stall detection, pipeline needs-action rules, local-time date arithmetic and the Sunday week boundary, planned-versus-logged time blocks and the activity model, gym weeks, session totals, per-exercise progression and pain grouping, every schema migration including the fields folded into notes rather than dropped, GRE day shapes, gates, cold retrieval and the portable-move count, reading positions and filename parsing, persistence with undo/quota/multi-tab conflicts, the outline parser against adversarial input, and the import validator against malformed files.
+**Unit tests** cover logic, not interface: stage unlocking including reordering and which stages a move locks or unlocks, progress rollup, the spaced-repetition scheduler including resets and retirement, pipeline needs-action rules, local-time date arithmetic and the Sunday week boundary, planned-versus-logged time blocks and the activity model, gym weeks, session totals, per-exercise progression and pain grouping, every schema migration including each field folded into a note rather than dropped, the CSV reader against quoted newlines and ragged rows, the XLSX reader against a real ZIP including date-formatted cells, header mapping and duplicate detection, persistence with undo/quota/multi-tab conflicts, the outline parser against adversarial input, and the import validator against malformed files.
 
-**End-to-end tests** cover the flows that matter: completing a stage unlocks the next and only the next; a failed attempt schedules correctly and appears in the queue on the right day; export then import round-trips exactly; a gym session records what was done and the week counts it against the target; a GRE entry cannot be saved without its portable move, and the retrieval queue stays cold until a result is recorded; a PDF imports, opens at the last page, and keeps its bookmarks across a reload. Plus the edge cases — a due task inside a locked stage staying out of "needs action", a dropped exercise leaving old sessions intact, a book whose file is missing, archiving instead of deleting, a full storage quota, a second tab writing, and the narrow-screen layout.
-
-The reading tests use two PDF fixtures in `tests/e2e/fixtures`, generated by `npm run fixtures` — one that declares a title and author, and one that declares nothing, which is the case the importer actually has to handle.
+**End-to-end tests** cover the flows that matter: completing a stage unlocks the next and only the next; ticking a task below the fold leaves the page where it was, while navigating still starts at the top; moving a stage names the stages it locked; a failed attempt schedules correctly and appears in the queue on the right day; an extraction cannot be half-written; export then import round-trips exactly; a gym session records what was done and the week counts it against the target; a spreadsheet of applications is mapped, corrected, previewed and imported, with duplicates left out. Plus the edge cases — a due task inside a locked stage staying out of "needs action", a dropped exercise leaving old sessions intact, a completed task reading as done rather than overdue, a file that is not really a spreadsheet, a full storage quota, a second tab writing, and the narrow-screen layout.
 
 The e2e suite downloads its own Chromium. If your machine already has one:
 
@@ -245,13 +238,13 @@ CHROMIUM_PATH=/path/to/chromium npm run test:e2e
 
 ## Stack and deployment
 
-Vanilla HTML, CSS and JavaScript as ES modules. No framework, no build step, no runtime dependencies beyond one vendored library: [pdf.js](https://mozilla.github.io/pdf.js/) lives in `vendor/pdfjs` because the site blocks external hosts and a CDN is not an option. It is Apache-2.0, which is compatible with this project's MIT licence; `vendor/pdfjs/README.md` records the version, what was taken and why, and how to update it. It is loaded on demand, so opening Cairn without opening a book never downloads it.
+Vanilla HTML, CSS and JavaScript as ES modules. No framework, no build step, no runtime dependencies beyond one vendored library: [fflate](https://github.com/101arrowz/fflate) lives in `vendor/fflate` because an `.xlsx` file is a ZIP archive and DEFLATE is not something to hand-roll. It is MIT, compatible with this project's licence, and `vendor/fflate/README.md` records the version, what was taken and why. It is loaded only when a spreadsheet is imported.
 
 A service worker caches the shell so it works offline once loaded.
 
 Push to `main`; `.github/workflows/pages.yml` runs both suites and then publishes the repository root to GitHub Pages. Pages must be set to **Source: GitHub Actions** — with any other source the deploy job fails before running a step.
 
-## Notes
+## Scope
 
 Built for one person, deliberately. No multi-user, no sync, no sharing — adding them would cost the things that make it fast.
 

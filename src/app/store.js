@@ -4,7 +4,6 @@
 // browser; in the app it is `window.localStorage`.
 
 import { STORAGE_KEY, SCHEMA_VERSION, createEmptyState, deepClone } from '../core/schema.js';
-import { builtinTemplates } from '../core/templates.js';
 import { validateImport } from '../core/validate.js';
 import { nowStamp, todayISO } from '../core/dates.js';
 import { uid } from '../core/ids.js';
@@ -31,7 +30,7 @@ export class Store {
     this.storage = storage;
     this.key = key;
     this.tabId = uid('tab');
-    this.state = createEmptyState(builtinTemplates());
+    this.state = createEmptyState();
     this.undoStack = [];
     this.redoStack = [];
     this.listeners = new Set();
@@ -62,7 +61,7 @@ export class Store {
       return this.state;
     }
     if (!raw) {
-      this.state = createEmptyState(builtinTemplates());
+      this.state = createEmptyState();
       this.lastSeenSeq = 0;
       return this.state;
     }
@@ -80,7 +79,7 @@ export class Store {
       // Keep the unreadable payload where the user can still get at it rather
       // than overwriting it with an empty state.
       this.status.corruptRaw = raw;
-      this.state = createEmptyState(builtinTemplates());
+      this.state = createEmptyState();
     }
     return this.state;
   }
@@ -262,20 +261,14 @@ export class Store {
 function mergeInto(target, incoming) {
   const collections = [
     'threads',
-    'notes',
-    'noteTemplates',
     'questions',
     'applications',
     'outreach',
     'exercises',
+    'gymSessions',
     'painRecords',
-    'greBlocks',
-    'grePhases',
-    'greDays',
-    'greEntries',
     'reading',
     'timeBlocks',
-    'archivedStages',
   ];
   for (const key of collections) {
     const existing = new Set((target[key] ?? []).map((item) => item.id));

@@ -13,18 +13,17 @@ import {
   DIFFICULTIES,
   APPLICATION_STATUSES,
   READING_STATUSES,
-  READING_SOURCES,
+  THREAD_STATUSES,
   MUSCLE_GROUPS,
   EXERCISE_STATUSES,
   PAIN_TIMING,
-  GRE_CAUSES,
+  MISS_CAUSES,
   deepClone,
 } from './schema.js';
 import { isValidISODate, isValidTime } from './dates.js';
 import { BLOCK_STATUSES } from './timeblocks.js';
 import { parseActivity, activityThreadId } from './activities.js';
 import { migrate, backfillDefaults } from './migrations.js';
-import { builtinTemplates } from './templates.js';
 
 class Report {
   constructor() {
@@ -153,7 +152,7 @@ function validateThreads(state, report, seenIds) {
     fixString(thread, 'description', `${path}.description`, report);
     fixString(thread, 'notes', `${path}.notes`, report);
     fixEnum(thread, 'type', THREAD_TYPES, `${path}.type`, report, 'project');
-    thread.archived = !!thread.archived;
+    fixEnum(thread, 'status', THREAD_STATUSES, `${path}.status`, report, 'active');
     fixLinks(thread, path, report);
     fixArray(thread, 'stages', `${path}.stages`, report);
 
@@ -263,6 +262,24 @@ function validateQuestions(state, report) {
       report.warn(`${path}.intervalIndex`, `"${q.intervalIndex}" is not a valid position in the interval chain — reset to the start`);
       q.intervalIndex = 0;
     }
+    // The four-field extraction. Every bank carries one; an empty one is the
+    // normal state for a question that has not been attempted yet.
+    if (!isObject(q.extraction)) q.extraction = {};
+    for (const key of ['gave', 'did', 'broke', 'portable']) {
+      fixString(q.extraction, key, `${path}.extraction.${key}`, report);
+    }
+    if (q.extraction.cause !== null && q.extraction.cause !== undefined && q.extraction.cause !== '') {
+      fixEnum(q.extraction, 'cause', MISS_CAUSES, `${path}.extraction.cause`, report, 'concept');
+    } else {
+      q.extraction.cause = null;
+    }
+    // Reported rather than repaired: only the person who solved it can write
+    // the portable move, and inventing one would be worse than an empty field.
+    const started = ['gave', 'did', 'broke'].some((k) => q.extraction[k].trim());
+    if (started && !q.extraction.portable.trim()) {
+      report.warn(`${path}.extraction`, 'has an extraction with no portable move — the rule is the point of the format, so this one is unfinished');
+    }
+
     q.retired = !!q.retired;
     fixDate(q, 'dueDate', `${path}.dueDate`, report);
     fixDate(q, 'retiredAt', `${path}.retiredAt`, report);
@@ -311,34 +328,6 @@ function validatePipelines(state, report) {
 }
 
 function validateRest(state, report) {
-  state.notes = state.notes.filter((note, i) => {
-    const path = `notes[${i}]`;
-    if (!isObject(note)) {
-      report.error(path, 'note is not an object');
-      return true;
-    }
-    if (!note.id) note.id = `note_recovered_${i}`;
-    fixString(note, 'title', `${path}.title`, report, { fallback: 'Untitled note' });
-    fixString(note, 'body', `${path}.body`, report);
-    if (note.attach !== null && note.attach !== undefined && !isObject(note.attach)) {
-      report.warn(`${path}.attach`, 'attachment is malformed — the note is kept as standalone');
-      note.attach = null;
-    }
-    return true;
-  });
-
-  state.noteTemplates = state.noteTemplates.filter((tpl, i) => {
-    const path = `noteTemplates[${i}]`;
-    if (!isObject(tpl)) {
-      report.error(path, 'template is not an object');
-      return true;
-    }
-    if (!tpl.id) tpl.id = `tpl_recovered_${i}`;
-    fixString(tpl, 'name', `${path}.name`, report, { fallback: 'Untitled template' });
-    fixString(tpl, 'body', `${path}.body`, report);
-    return true;
-  });
-
   state.exercises = state.exercises.filter((exercise, i) => {
     const path = `exercises[${i}]`;
     if (!isObject(exercise)) {
@@ -421,107 +410,6 @@ function validateRest(state, report) {
     return true;
   });
 
-  state.greBlocks = state.greBlocks.filter((block, i) => {
-    const path = `greBlocks[${i}]`;
-    if (!isObject(block)) {
-      report.error(path, 'GRE block is not an object');
-      return true;
-    }
-    if (!block.id) block.id = `grb_recovered_${i}`;
-    fixString(block, 'code', `${path}.code`, report, { fallback: `B${i + 1}` });
-    fixString(block, 'name', `${path}.name`, report, { fallback: 'Untitled block' });
-    fixString(block, 'description', `${path}.description`, report);
-    block.minutes = positiveOrNull(block.minutes, `${path}.minutes`, report) ?? 0;
-    block.order = Number.isFinite(Number(block.order)) ? Number(block.order) : i;
-    block.pinFirst = !!block.pinFirst;
-    block.everyDay = !!block.everyDay;
-    block.hasTopic = !!block.hasTopic;
-    block.notBeforeDay = positiveOrNull(block.notBeforeDay, `${path}.notBeforeDay`, report);
-    return true;
-  });
-
-  state.grePhases = state.grePhases.filter((phase, i) => {
-    const path = `grePhases[${i}]`;
-    if (!isObject(phase)) {
-      report.error(path, 'GRE phase is not an object');
-      return true;
-    }
-    if (!phase.id) phase.id = `grp_recovered_${i}`;
-    fixString(phase, 'name', `${path}.name`, report, { fallback: `Phase ${i + 1}` });
-    phase.order = Number.isFinite(Number(phase.order)) ? Number(phase.order) : i;
-    phase.gateModule = positiveOrNull(phase.gateModule, `${path}.gateModule`, report);
-    phase.gateByDay = positiveOrNull(phase.gateByDay, `${path}.gateByDay`, report);
-    if ((phase.gateModule === null) !== (phase.gateByDay === null)) {
-      // Half a gate cannot be met or missed, so it is reported rather than
-      // left to render as a silent pass.
-      report.warn(path, 'has half a gate — a module number without a day, or the reverse. It will not be checked.');
-    }
-    return true;
-  });
-
-  state.greDays = state.greDays.filter((day, i) => {
-    const path = `greDays[${i}]`;
-    if (!isObject(day)) {
-      report.error(path, 'GRE day is not an object');
-      return true;
-    }
-    if (!day.id) day.id = `grd_recovered_${i}`;
-    fixString(day, 'checkpoint', `${path}.checkpoint`, report);
-    fixString(day, 'notes', `${path}.notes`, report);
-    fixDate(day, 'date', `${path}.date`, report);
-    day.dayNumber = Number.isFinite(Number(day.dayNumber)) ? Number(day.dayNumber) : i + 1;
-    day.moduleReached = positiveOrNull(day.moduleReached, `${path}.moduleReached`, report);
-    fixArray(day, 'blockCodes', `${path}.blockCodes`, report);
-    day.blockCodes = day.blockCodes.filter((code) => typeof code === 'string');
-    fixArray(day, 'completed', `${path}.completed`, report);
-    day.completed = day.completed.filter((code) => typeof code === 'string');
-    if (!isObject(day.topics)) day.topics = {};
-    return true;
-  });
-
-  state.greEntries = state.greEntries.filter((entry, i) => {
-    const path = `greEntries[${i}]`;
-    if (!isObject(entry)) {
-      report.error(path, 'GRE log entry is not an object');
-      return true;
-    }
-    if (!entry.id) entry.id = `gre_recovered_${i}`;
-    for (const key of ['source', 'gave', 'did', 'broke', 'portable']) {
-      fixString(entry, key, `${path}.${key}`, report);
-    }
-    fixDate(entry, 'date', `${path}.date`, report);
-    fixDate(entry, 'dueDate', `${path}.dueDate`, report);
-    fixDate(entry, 'retiredAt', `${path}.retiredAt`, report);
-    fixEnum(entry, 'cause', GRE_CAUSES, `${path}.cause`, report, 'concept');
-    entry.correct = !!entry.correct;
-    entry.retired = !!entry.retired;
-    entry.dayNumber = positiveOrNull(entry.dayNumber, `${path}.dayNumber`, report);
-    if (!Number.isInteger(entry.intervalIndex) || entry.intervalIndex < 0) {
-      report.warn(`${path}.intervalIndex`, 'not a valid position in the retrieval chain — reset to the start');
-      entry.intervalIndex = 0;
-    }
-    fixArray(entry, 'attempts', `${path}.attempts`, report);
-    entry.attempts = entry.attempts.filter((attempt, ai) => {
-      const aPath = `${path}.attempts[${ai}]`;
-      if (!isObject(attempt)) {
-        report.error(aPath, 'attempt is not an object');
-        return true;
-      }
-      if (!attempt.id) attempt.id = `gra_recovered_${i}_${ai}`;
-      fixString(attempt, 'note', `${aPath}.note`, report);
-      fixDate(attempt, 'date', `${aPath}.date`, report);
-      attempt.correct = !!attempt.correct;
-      attempt.minutes = positiveOrNull(attempt.minutes, `${aPath}.minutes`, report);
-      return true;
-    });
-    if (!entry.portable.trim()) {
-      // The editor will not save one without it. A file that has one anyway is
-      // kept — refusing would lose the problem — but it is said out loud.
-      report.warn(path, 'has no portable move — it is kept, but the extraction it exists to record did not happen');
-    }
-    return true;
-  });
-
   state.reading = state.reading.filter((book, i) => {
     const path = `reading[${i}]`;
     if (!isObject(book)) {
@@ -532,35 +420,17 @@ function validateRest(state, report) {
     fixString(book, 'title', `${path}.title`, report, { fallback: 'Untitled' });
     fixString(book, 'author', `${path}.author`, report);
     fixString(book, 'notes', `${path}.notes`, report);
-    fixString(book, 'fileName', `${path}.fileName`, report);
     fixEnum(book, 'status', READING_STATUSES, `${path}.status`, report, 'reading');
-    if (!READING_SOURCES.includes(book.source)) book.source = 'manual';
-    if (!['page', 'percent'].includes(book.unit)) book.unit = 'page';
-    const pos = Number(book.position);
-    book.position = Number.isFinite(pos) && pos >= 0 ? pos : 0;
-    book.pageCount = positiveOrNull(book.pageCount, `${path}.pageCount`, report);
-    book.fileSize = Number.isFinite(Number(book.fileSize)) ? Number(book.fileSize) : 0;
-    if (book.cover !== null && book.cover !== undefined && typeof book.cover !== 'string') {
-      report.warn(`${path}.cover`, 'cover is not an image — cleared');
-      book.cover = null;
+    book.page = positiveOrNull(book.page, `${path}.page`, report);
+    const rating = Number(book.rating);
+    if (book.rating === null || book.rating === undefined || book.rating === '') {
+      book.rating = null;
+    } else if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
+      report.warn(`${path}.rating`, `"${book.rating}" is not a rating from 1 to 5 — cleared`);
+      book.rating = null;
+    } else {
+      book.rating = Math.round(rating);
     }
-    if (book.cover === undefined) book.cover = null;
-    fixArray(book, 'bookmarks', `${path}.bookmarks`, report);
-    book.bookmarks = book.bookmarks.filter((mark, bi) => {
-      const bPath = `${path}.bookmarks[${bi}]`;
-      if (!isObject(mark)) {
-        report.error(bPath, 'bookmark is not an object');
-        return true;
-      }
-      if (!mark.id) mark.id = `bm_recovered_${i}_${bi}`;
-      fixString(mark, 'note', `${bPath}.note`, report);
-      const page = Number(mark.page);
-      if (!Number.isInteger(page) || page < 1) {
-        report.warn(bPath, `page "${mark.page}" is not a page number — the bookmark is kept, pointing at page 1`);
-        mark.page = 1;
-      }
-      return true;
-    });
     return true;
   });
 
@@ -618,13 +488,6 @@ function crossCheck(state, report) {
       block.taskId = null;
     }
   }
-  for (const note of state.notes ?? []) {
-    if (note.attach?.id && note.attach.type === 'thread' && !threadIds.has(note.attach.id)) {
-      report.warn(`notes[${note.id}]`, 'attached to a thread that is not in this file — kept as standalone');
-      note.attach = null;
-    }
-  }
-
   const exerciseIds = new Set((state.exercises ?? []).map((e) => e.id));
 
   for (const session of state.gymSessions ?? []) {
@@ -637,18 +500,6 @@ function crossCheck(state, report) {
           'includes an exercise that is not in this file — the sets are kept and shown as "Removed exercise"',
         );
       }
-    }
-  }
-
-  const entryIds = new Set((state.greEntries ?? []).map((e) => e.id));
-  for (const entry of state.greEntries ?? []) {
-    if (entry.appliedFrom && !entryIds.has(entry.appliedFrom)) {
-      report.warn(`greEntries[${entry.id}]`, 'links to an earlier entry that is not in this file — the link is cleared, so it will not be counted as a portable-move hit');
-      entry.appliedFrom = null;
-    }
-    if (entry.appliedFrom === entry.id) {
-      report.warn(`greEntries[${entry.id}]`, 'links to itself — cleared');
-      entry.appliedFrom = null;
     }
   }
 
@@ -722,7 +573,7 @@ export function validateImport(raw) {
   }
   if (!structureOk) return finish(report, null);
 
-  for (const note of backfillDefaults(candidate, builtinTemplates())) report.note(note);
+  for (const note of backfillDefaults(candidate)) report.note(note);
 
   // Field-level repair.
   const seenIds = new Set();
@@ -768,15 +619,12 @@ export function summarise(state) {
     threads: (state.threads ?? []).length,
     stages,
     tasks,
-    notes: (state.notes ?? []).length,
     questions: (state.questions ?? []).length,
     applications: (state.applications ?? []).length,
     outreach: (state.outreach ?? []).length,
     exercises: (state.exercises ?? []).length,
     gymSessions: (state.gymSessions ?? []).length,
     painRecords: (state.painRecords ?? []).length,
-    greDays: (state.greDays ?? []).length,
-    greEntries: (state.greEntries ?? []).length,
     reading: (state.reading ?? []).length,
     timeBlocks: (state.timeBlocks ?? []).length,
   };

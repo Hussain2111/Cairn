@@ -4,10 +4,9 @@ import assert from 'node:assert/strict';
 import { validateImport } from '../../src/core/validate.js';
 import { migrate } from '../../src/core/migrations.js';
 import { createEmptyState, SCHEMA_VERSION, makeThread, makeStage, makeStep, makeTask } from '../../src/core/schema.js';
-import { builtinTemplates } from '../../src/core/templates.js';
 
 function goodState() {
-  const state = createEmptyState(builtinTemplates());
+  const state = createEmptyState();
   const thread = makeThread({ name: 'Compiler', type: 'project' });
   const stage = makeStage({ title: 'Lexer', doneWhen: 'every token type has a passing test' });
   const step = makeStep({ title: 'Numbers' });
@@ -32,15 +31,12 @@ test('a well-formed export round-trips exactly', () => {
     threads: 1,
     stages: 1,
     tasks: 1,
-    notes: 0,
     questions: 0,
     applications: 0,
     outreach: 0,
     exercises: 0,
     gymSessions: 0,
     painRecords: 0,
-    greDays: 0,
-    greEntries: 0,
     reading: 0,
     timeBlocks: 0,
   });
@@ -77,13 +73,13 @@ test('a file that is not a Cairn export is refused rather than half-loaded', () 
 });
 
 test('a newer schema version is refused with an actionable message', () => {
-  const result = validateImport(JSON.stringify({ ...createEmptyState([]), schemaVersion: SCHEMA_VERSION + 5 }));
+  const result = validateImport(JSON.stringify({ ...createEmptyState(), schemaVersion: SCHEMA_VERSION + 5 }));
   assert.equal(result.ok, false);
   assert.match(messages(result.errors), /only understands up to v/);
 });
 
 test('a collection of the wrong type is a hard error, not a silent reset', () => {
-  const state = { ...createEmptyState([]), threads: { nope: true } };
+  const state = { ...createEmptyState(), threads: { nope: true } };
   const result = validateImport(JSON.stringify(state));
   assert.equal(result.ok, false);
   assert.equal(result.state, null);
@@ -91,7 +87,7 @@ test('a collection of the wrong type is a hard error, not a silent reset', () =>
 });
 
 test('a non-object record inside a collection is an error and the import is refused', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   state.threads.push('just a string');
   const result = validateImport(JSON.stringify(state));
   assert.equal(result.ok, false);
@@ -99,7 +95,7 @@ test('a non-object record inside a collection is an error and the import is refu
 });
 
 test('duplicate thread ids are refused', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   const a = makeThread({ name: 'A' });
   const b = makeThread({ name: 'B' });
   b.id = a.id;
@@ -144,7 +140,6 @@ test('missing collections are backfilled and reported', () => {
   assert.deepEqual(result.state.questions, []);
   assert.deepEqual(result.state.exercises, []);
   assert.ok(result.notes.some((n) => /questions/.test(n)));
-  assert.ok(result.state.noteTemplates.length >= 5, 'built-in templates are restored');
 });
 
 test('records missing ids are given one instead of being discarded', () => {
@@ -175,7 +170,7 @@ test('a stray completion date on an open task is cleared', () => {
 });
 
 test('an exercise with a nonsense status is kept as active, and its secondaries are cleaned', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   state.exercises.push({
     id: 'ex1', name: 'Upright row', muscle: 'shoulders', secondary: ['shoulders', 'nonsense'],
     status: 'retired-ish',
@@ -190,7 +185,7 @@ test('an exercise with a nonsense status is kept as active, and its secondaries 
 });
 
 test('pain with no location is filed rather than dropped', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   state.painRecords.push({ id: 'p1', date: '2026-08-05', location: '  ', exerciseId: null, when: 'sideways', note: '' });
   const result = validateImport(JSON.stringify(state));
   assert.equal(result.ok, true);
@@ -211,7 +206,7 @@ test('a time block pointing at a missing thread is kept, unassigned', () => {
 });
 
 test('an invalid block time is cleared and the block is retained', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   state.timeBlocks.push({ id: 'b1', date: '2026-08-07', start: '25:00', end: '10:00' });
   const result = validateImport(JSON.stringify(state));
   assert.equal(result.state.timeBlocks.length, 1);
@@ -220,7 +215,7 @@ test('an invalid block time is cleared and the block is retained', () => {
 });
 
 test('a corrupt interval index is reset to the start of the chain', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   state.questions.push({ id: 'q1', bank: 'sql', title: 'Q', url: '', tags: [], difficulty: 'medium', attempts: [], intervalIndex: 'three', dueDate: '2026-08-07', retired: false });
   const result = validateImport(JSON.stringify(state));
   assert.equal(result.state.questions[0].intervalIndex, 0);
@@ -228,7 +223,7 @@ test('a corrupt interval index is reset to the start of the chain', () => {
 });
 
 test('attempts with unparseable dates are kept, not deleted', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   state.questions.push({
     id: 'q1', bank: 'gre', title: 'Q', url: '', tags: [], difficulty: 'hard', intervalIndex: 0, dueDate: '2026-08-07', retired: false,
     attempts: [{ id: 'a1', date: 'last tuesday', unaided: true, minutes: 10, hesitation: 'inequalities' }],

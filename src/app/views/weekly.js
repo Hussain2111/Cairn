@@ -70,12 +70,9 @@ export function render(ctx) {
           el('div.card__body.stack--tight.stack', report.didNotMove.map((entry) =>
             el('div.row.row--between', [
               el('a', { href: `#/thread/${entry.thread.id}`, text: entry.thread.name }),
-              el('div.row', [
-                entry.stall.stalled ? tag(`stalled ${entry.stall.idleDays}d`, 'danger') : tag(`${entry.stall.idleDays}d idle`),
-                el('span.section__meta', {
-                  text: entry.stall.lastCompletion ? `last ${formatDate(entry.stall.lastCompletion)}` : 'never',
-                }),
-              ]),
+              el('span.section__meta', {
+                text: entry.lastCompletion ? `last completion ${formatDate(entry.lastCompletion)}` : 'nothing completed yet',
+              }),
             ]))),
         ])]
       : [el('p.muted', { text: 'Every active thread moved. Unusual and worth noticing.' })]),

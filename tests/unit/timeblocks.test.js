@@ -39,7 +39,7 @@ test('an activity is a namespaced reference, and nonsense reads as unassigned', 
 });
 
 test('an id that looks like an area name cannot be mistaken for one', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   const thread = makeThread({ name: 'A project called gym' });
   thread.id = 'gym';
   state.threads.push(thread);
@@ -49,21 +49,21 @@ test('an id that looks like an area name cannot be mistaken for one', () => {
 });
 
 test('a deleted thread is named as gone, not as unassigned', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   assert.equal(activityLabel(state, 'thread:missing'), 'A deleted thread');
   assert.equal(activityLabel(state, null), 'Unassigned');
   assert.equal(activityRoute(state, 'thread:missing'), null, 'and does not link anywhere');
 });
 
 test('the picker offers every thread and every standing area', () => {
-  const state = createEmptyState([]);
-  state.threads.push(makeThread({ name: 'Compiler' }), Object.assign(makeThread({ name: 'Old' }), { archived: true }));
+  const state = createEmptyState();
+  state.threads.push(makeThread({ name: 'Compiler' }), Object.assign(makeThread({ name: 'Old' }), { status: 'done' }));
 
   const options = activityOptions(state);
   const labels = options.map((o) => o.label);
   assert.ok(labels.includes('Compiler'));
-  assert.equal(labels.includes('Old'), false, 'archived threads are not offered');
-  for (const area of ['Gym', 'GRE', 'LeetCode practice', 'SQL practice', 'Reading', 'Applications and outreach']) {
+  assert.equal(labels.includes('Old'), false, 'finished threads are not offered');
+  for (const area of ['Gym', 'GRE practice', 'LeetCode practice', 'SQL practice', 'Reading', 'Applications and outreach']) {
     assert.ok(labels.includes(area), `${area} is assignable`);
   }
 });
@@ -106,7 +106,7 @@ test('a logged block sitting on the plan it fulfils is not an overlap', () => {
 });
 
 test('the day separates what was planned from what was done', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   state.timeBlocks.push(
     makeTimeBlock({ date: TODAY, start: '09:00', end: '12:00', activity: 'area:gre' }),
     makeTimeBlock({ date: TODAY, start: '09:30', end: '11:00', activity: 'area:gre', status: 'logged' }),
@@ -122,7 +122,7 @@ test('the day separates what was planned from what was done', () => {
 });
 
 test('the weekly distribution counts areas alongside threads', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   const thread = makeThread({ name: 'Compiler' });
   state.threads.push(thread);
   state.timeBlocks.push(
@@ -149,7 +149,7 @@ test('the weekly distribution counts areas alongside threads', () => {
 });
 
 test('blocks are found by the thread they point at', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   const thread = makeThread({ name: 'Compiler' });
   state.threads.push(thread);
   state.timeBlocks.push(
@@ -163,7 +163,7 @@ test('blocks are found by the thread they point at', () => {
 
 test('a v3 block with both time pairs becomes a plan and a separate record', () => {
   const v3 = {
-    ...createEmptyState([]),
+    ...createEmptyState(),
     schemaVersion: 3,
     timeBlocks: [{
       id: 'b1',
@@ -200,7 +200,7 @@ test('a v3 block with both time pairs becomes a plan and a separate record', () 
 
 test('a v3 block that was only ever logged stays one block', () => {
   const v3 = {
-    ...createEmptyState([]),
+    ...createEmptyState(),
     schemaVersion: 3,
     timeBlocks: [
       { id: 'b1', date: TODAY, start: null, end: null, actualStart: '18:00', actualEnd: '19:00', threadId: null },
