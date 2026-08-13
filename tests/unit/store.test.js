@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { Store } from '../../src/app/store.js';
-import { makeThread, makeStage, makeStep, makeTask } from '../../src/core/schema.js';
+import { makeThread, makeStage, makeStep, makeTask , SCHEMA_VERSION } from '../../src/core/schema.js';
 
 /** A localStorage stand-in, optionally with a byte budget. */
 class MemoryStorage {
@@ -41,11 +41,14 @@ function seededStore(storage = new MemoryStorage()) {
   return store;
 }
 
-test('a fresh store starts empty with the built-in templates seeded', () => {
+test('a fresh store starts empty at the current schema version', () => {
   const store = new Store({ storage: new MemoryStorage() });
   store.load();
+  assert.equal(store.state.schemaVersion, SCHEMA_VERSION);
   assert.deepEqual(store.state.threads, []);
-  assert.ok(store.state.noteTemplates.length >= 5);
+  assert.deepEqual(store.state.questions, []);
+  assert.equal(store.state.notes, undefined, 'the standalone notes collection is gone');
+  assert.equal(store.state.noteTemplates, undefined);
 });
 
 test('state survives a save and reload', () => {

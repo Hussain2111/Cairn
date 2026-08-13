@@ -35,7 +35,7 @@ import {
 const FRI = '2026-08-07';
 
 function fixture({ target = 4 } = {}) {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   state.settings.gymWeeklyTarget = target;
 
   const bench = makeExercise({ name: 'Bench press', muscle: 'chest', secondary: ['arms'] });
@@ -153,7 +153,7 @@ test('duplicate exercise names are caught, dropped ones included', () => {
 });
 
 test('the starter library seeds once and never duplicates', () => {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
   const first = seedLibrary(state);
   assert.ok(first > 15);
   assert.equal(seedLibrary(state), 0);

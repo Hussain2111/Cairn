@@ -1,9 +1,10 @@
-// Pieces shared between views: page headers, link editing, the note-attachment
-// picker, and small formatters.
+// Pieces shared between views: page headers, link editing, the generic record
+// editor, and small formatters.
 
 import { el, field, input, select, textarea, openDialog, tag } from '../ui.js';
 import { formatDate, relativeDay, diffDays } from '../../core/dates.js';
 import { makeLink } from '../../core/schema.js';
+import { activeThreads } from '../../core/threads.js';
 
 export function pageHead(title, { sub = null, actions = [] } = {}) {
   return el('header.page-head', [
@@ -23,16 +24,21 @@ export function statTile(value, label, variant = '') {
 }
 
 /**
- * A due date rendered with the right urgency colour.
+ * A due date rendered with the right urgency colour — or, once the task is
+ * ticked, the word "Done".
  *
- * `done` matters: once a task is ticked its due date is history, not a
- * deadline. Measuring it against today would keep shouting "3d overdue" at
- * something already finished — and in the amber-as-signal-lamp scheme, the
- * loudest thing on a completed row would be the one thing needing no action.
+ * A finished task has no deadline. Measuring one against today would keep
+ * shouting "3d overdue" at something already dealt with, and in the
+ * amber-as-signal-lamp scheme the loudest thing on the row would be the one
+ * thing needing no action. The date itself is not information either: what you
+ * want to know at a glance is that it is finished, and the date it was due is
+ * still in the editor for anyone who wants it.
+ *
+ * Every call site passes through here, so there is one place that decides this.
  */
 export function dueTag(due, today, { done = false } = {}) {
   if (!due) return null;
-  if (done) return tag(`due ${formatDate(due)}`);
+  if (done) return tag('Done', 'teal');
   const delta = diffDays(today, due);
   const variant = delta === null ? '' : delta < 0 ? 'danger' : delta <= 2 ? 'amber' : '';
   return tag(`${formatDate(due)} · ${relativeDay(due, today)}`, variant);
@@ -99,53 +105,11 @@ export function linkEditor(links, onChange) {
   ]);
 }
 
-/** Thread / stage / step / task picker used when attaching a note. */
-export function attachPicker(state, current) {
-  const options = [{ value: '', label: 'Standalone' }];
-  for (const thread of state.threads) {
-    options.push({ value: `thread:${thread.id}`, label: `Thread — ${thread.name}` });
-    thread.stages.forEach((stage, si) => {
-      options.push({ value: `stage:${stage.id}`, label: `  ${si + 1}. ${stage.title}` });
-      for (const step of stage.steps) {
-        options.push({ value: `step:${step.id}`, label: `    · ${step.title}` });
-        for (const task of step.tasks) {
-          options.push({ value: `task:${task.id}`, label: `      ▸ ${task.title}` });
-        }
-      }
-    });
-  }
-  const value = current ? `${current.type}:${current.id}` : '';
-  return select(options, value);
-}
-
-export function parseAttach(value) {
-  if (!value) return null;
-  const [type, id] = value.split(':');
-  return type && id ? { type, id } : null;
-}
-
-export function describeAttach(state, attach) {
-  if (!attach) return 'Standalone';
-  for (const thread of state.threads) {
-    if (attach.type === 'thread' && thread.id === attach.id) return thread.name;
-    for (const stage of thread.stages) {
-      if (attach.type === 'stage' && stage.id === attach.id) return `${thread.name} › ${stage.title}`;
-      for (const step of stage.steps) {
-        if (attach.type === 'step' && step.id === attach.id) return `${thread.name} › ${step.title}`;
-        for (const task of step.tasks) {
-          if (attach.type === 'task' && task.id === attach.id) return `${thread.name} › ${task.title}`;
-        }
-      }
-    }
-  }
-  return 'Attached to something that no longer exists';
-}
-
 /**
  * Generic record editor: an array of field descriptors rendered into a dialog.
  * Returns the collected values, or null if cancelled.
  */
-export function editRecord({ title, fields, values = {}, submitLabel = 'Save', wide = false, deletable = false }) {
+export function editRecord({ title, fields, values = {}, submitLabel = 'Save', wide = false, deletable = false, extraAction = null }) {
   const controls = new Map();
   const errorNode = el('div.field__error');
 
@@ -199,6 +163,15 @@ export function editRecord({ title, fields, values = {}, submitLabel = 'Save', w
         // Resolves with { __delete: true } so callers can run their own
         // confirm step rather than deleting from inside the editor.
         deletable ? el('button.btn.btn--danger', { type: 'button', text: 'Delete', onclick: () => close({ __delete: true }) }) : null,
+        // A second editor reachable from this one — closes this dialog first,
+        // so the two never stack.
+        extraAction
+          ? el('button.btn', {
+              type: 'button',
+              text: extraAction.label,
+              onclick: () => { close(null); extraAction.onClick(); },
+            })
+          : null,
         el('div.spacer'),
         el('button.btn', { type: 'button', text: 'Cancel', onclick: () => close(null) }),
         el('button.btn.btn--primary', { type: 'button', text: submitLabel, onclick: submit }),
@@ -209,7 +182,7 @@ export function editRecord({ title, fields, values = {}, submitLabel = 'Save', w
 
 export function threadOptions(state, { includeNone = true, noneLabel = 'No thread' } = {}) {
   const options = includeNone ? [{ value: '', label: noneLabel }] : [];
-  for (const thread of state.threads.filter((t) => !t.archived)) {
+  for (const thread of activeThreads(state)) {
     options.push({ value: thread.id, label: thread.name });
   }
   return options;

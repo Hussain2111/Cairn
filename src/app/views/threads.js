@@ -1,8 +1,8 @@
-// The list of threads, with progress, next task and stall state.
+// The list of threads, with progress and the next task in each.
 
 import { el, meter, tag, empty } from '../ui.js';
 import { pageHead, editRecord } from './shared.js';
-import { threadProgress, nextTask, threadStall } from '../../core/threads.js';
+import { threadProgress, nextTask, lastCompletionDate, isActive } from '../../core/threads.js';
 import { makeThread, makeStage, THREAD_TYPES } from '../../core/schema.js';
 import { openOutlineImport } from './outline-import.js';
 import { formatDate } from '../../core/dates.js';
@@ -12,18 +12,18 @@ export function title() {
 }
 
 export function render(ctx) {
-  const filter = ctx.route.query.get('filter');
-  const showArchived = filter === 'archived';
-  const stallDays = ctx.state.settings.stallDays;
-
-  let threads = ctx.state.threads.filter((t) => !!t.archived === showArchived);
-  const rows = threads.map((thread) => ({
-    thread,
-    progress: threadProgress(thread),
-    next: nextTask(thread),
-    stall: threadStall(thread, { today: ctx.today, days: stallDays }),
-  }));
-  const visible = filter === 'stalled' ? rows.filter((r) => r.stall.stalled) : rows;
+  // Two states, so two lists. A done thread is kept because its history is
+  // worth having, not because it is waiting for a decision.
+  const showDone = ctx.route.query.get('filter') === 'done';
+  const rows = ctx.state.threads
+    .filter((thread) => isActive(thread) !== showDone)
+    .map((thread) => ({
+      thread,
+      progress: threadProgress(thread),
+      next: nextTask(thread),
+      lastCompletion: lastCompletionDate(thread),
+    }));
+  const doneCount = ctx.state.threads.filter((t) => !isActive(t)).length;
 
   return el('div', [
     pageHead('Threads', {
@@ -35,29 +35,25 @@ export function render(ctx) {
     }),
 
     el('div.row', { style: { marginBottom: 'var(--sp-4)' } }, [
-      filterLink(ctx, null, 'Active', filter),
-      filterLink(ctx, 'stalled', 'Stalled', filter),
-      filterLink(ctx, 'archived', 'Archived', filter),
+      filterLink(null, 'Active', showDone),
+      filterLink('done', doneCount ? `Done (${doneCount})` : 'Done', showDone),
     ]),
 
-    visible.length
-      ? el('div.grid.grid--2', visible.map((row) => threadCard(ctx, row)))
-      : emptyFor(ctx, filter),
+    rows.length
+      ? el('div.grid.grid--2', rows.map((row) => threadCard(ctx, row)))
+      : emptyFor(ctx, showDone),
   ]);
 }
 
-function filterLink(ctx, value, label, current) {
+function filterLink(value, label, showDone) {
   const href = value ? `#/threads?filter=${value}` : '#/threads';
-  const active = (current ?? null) === value;
+  const active = (value === 'done') === showDone;
   return el('a.btn.btn--sm' + (active ? '' : '.btn--ghost'), { href, text: label });
 }
 
-function emptyFor(ctx, filter) {
-  if (filter === 'stalled') {
-    return empty('Nothing has stalled', `Every active thread has completed something in the last ${ctx.state.settings.stallDays} days.`);
-  }
-  if (filter === 'archived') {
-    return empty('No archived threads', 'Threads you archive stay in your data and out of Today.');
+function emptyFor(ctx, showDone) {
+  if (showDone) {
+    return empty('Nothing finished yet', 'A thread you mark done leaves Today and keeps its history here.');
   }
   return empty(
     'No threads yet',
@@ -69,7 +65,7 @@ function emptyFor(ctx, filter) {
   );
 }
 
-function threadCard(ctx, { thread, progress, next, stall }) {
+function threadCard(ctx, { thread, progress, next, lastCompletion }) {
   return el('div.card', [
     el('div.card__body.stack', [
       el('div.row.row--between', [
@@ -84,7 +80,7 @@ function threadCard(ctx, { thread, progress, next, stall }) {
       el('div.row', [
         tag(`${progress.done}/${progress.total} tasks`),
         tag(`${progress.stagesComplete}/${progress.stages} stages`),
-        stall.stalled ? tag(`stalled ${stall.idleDays}d`, 'danger') : null,
+        isActive(thread) ? null : tag('done', 'teal'),
       ]),
 
       el('div', [
@@ -96,7 +92,7 @@ function threadCard(ctx, { thread, progress, next, stall }) {
 
       el('div.row', [
         el('span.section__meta', {
-          text: stall.lastCompletion ? `last completion ${formatDate(stall.lastCompletion)}` : 'nothing completed yet',
+          text: lastCompletion ? `last completion ${formatDate(lastCompletion)}` : 'nothing completed yet',
         }),
         el('div.spacer'),
         el('a.btn.btn--sm', { href: `#/thread/${thread.id}`, text: 'Open' }),

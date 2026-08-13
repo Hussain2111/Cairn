@@ -10,15 +10,17 @@
 // Namespacing keeps a thread whose id happens to read like an area name from
 // colliding with one, and makes an unknown value obvious rather than silent.
 
+import { activeThreads } from './threads.js';
+
 /** The trackable areas that are not threads. Order is the order they appear. */
 export const ACTIVITY_AREAS = [
   { id: 'gym', label: 'Gym', route: '#/gym' },
-  { id: 'gre', label: 'GRE', route: '#/gre' },
+  { id: 'gre', label: 'GRE practice', route: '#/questions/gre' },
   { id: 'leetcode', label: 'LeetCode practice', route: '#/questions/leetcode' },
   { id: 'sql', label: 'SQL practice', route: '#/questions/sql' },
   { id: 'reading', label: 'Reading', route: '#/reading' },
   { id: 'applications', label: 'Applications and outreach', route: '#/pipelines' },
-  { id: 'notes', label: 'Writing and notes', route: '#/notes' },
+  { id: 'writing', label: 'Writing', route: null },
   { id: 'admin', label: 'Admin and errands', route: null },
   { id: 'rest', label: 'Rest', route: null },
 ];
@@ -77,7 +79,7 @@ export function activityRoute(state, activity) {
  */
 export function activityOptions(state, { noneLabel = 'Unassigned' } = {}) {
   const options = [{ value: '', label: noneLabel }];
-  const threads = (state?.threads ?? []).filter((t) => !t.archived);
+  const threads = activeThreads(state);
   if (threads.length) {
     options.push({ value: '__threads', label: '— threads —' });
     for (const thread of threads) options.push({ value: threadActivity(thread.id), label: thread.name });

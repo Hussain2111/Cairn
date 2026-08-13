@@ -13,11 +13,18 @@ import {
   mergeQuestion,
   normaliseIntervals,
 } from '../../core/srs.js';
-import { makeQuestion, makeAttempt, BANKS, BANK_LABELS, BANK_FIELDS, DIFFICULTIES } from '../../core/schema.js';
+import {
+  makeQuestion,
+  makeAttempt,
+  makeExtraction,
+  hasExtraction,
+  BANKS,
+  BANK_LABELS,
+  BANK_FIELDS,
+  DIFFICULTIES,
+  MISS_CAUSES,
+} from '../../core/schema.js';
 import { formatDate, relativeDay, todayISO } from '../../core/dates.js';
-import { BUILTIN_TEMPLATE_IDS } from '../../core/templates.js';
-import { applyTemplate } from '../../core/templates.js';
-import { makeNote } from '../../core/schema.js';
 
 export function title(ctx) {
   const bank = ctx.route.params[0];
@@ -129,12 +136,23 @@ function questionRow(ctx, question, today, focusId) {
       last?.hesitation
         ? el('div.hesitation', { style: { marginTop: 'var(--sp-2)' }, text: `Hesitated on: ${last.hesitation}` })
         : null,
+      // The portable move is the output of the whole exercise, so it reads on
+      // the row rather than behind a click.
+      question.extraction?.portable
+        ? el('div.portable', { style: { marginTop: 'var(--sp-2)' }, text: question.extraction.portable })
+        : null,
     ]),
     el('div.row', [
       question.retired
         ? tag(`retired ${formatDate(question.retiredAt)}`, 'teal')
         : tag(`${formatDate(question.dueDate)} · ${relativeDay(question.dueDate, today)}`, overdue ? 'danger' : question.dueDate === today ? 'amber' : ''),
       el('button.btn.btn--sm', { type: 'button', text: 'Attempt', onclick: () => logAttempt(ctx, question) }),
+      el('button.btn.btn--ghost.btn--sm', {
+        type: 'button',
+        text: hasExtraction(question) ? 'Extraction' : 'Extract',
+        'aria-label': `Extraction for ${question.title}`,
+        onclick: () => openExtraction(ctx, question),
+      }),
       el('button.btn.btn--ghost.btn--sm', { type: 'button', text: 'Edit', onclick: () => editQuestion(ctx, question) }),
     ]),
   ]);
@@ -184,9 +202,15 @@ function renderReview(ctx) {
         : null,
       el('div.row', (question.tags ?? []).map((t) => tag(t))),
       priorHesitations(question),
+      question.extraction?.portable
+        ? el('div.stack--tight.stack', [
+            el('span.field__label', { text: 'The move you took from it last time' }),
+            el('div.portable', { text: question.extraction.portable }),
+          ])
+        : null,
       el('div.row', [
         el('button.btn.btn--primary', { type: 'button', text: 'Record attempt', onclick: () => logAttempt(ctx, question) }),
-        el('button.btn', { type: 'button', text: 'Write it up', onclick: () => writeUp(ctx, question) }),
+        el('button.btn', { type: 'button', text: 'Extract', onclick: () => openExtraction(ctx, question) }),
         el('button.btn.btn--ghost', { type: 'button', text: 'Skip for now', onclick: () => skip(ctx, question) }),
       ]),
     ]),
@@ -292,24 +316,113 @@ async function logAttempt(ctx, question) {
     advanced: `Next review ${formatDate(question.dueDate)}.`,
     held: `Hesitation recorded, so it stays at the final interval. Next review ${formatDate(question.dueDate)}.`,
   }[outcome];
+
+  // Straight after a miss is the one moment the extraction can actually be
+  // written — later you remember the answer, not the mistake. So it is offered
+  // here, but as an offer: a dialog that opens itself on every wrong answer
+  // stops being a prompt and becomes a toll.
+  const offerExtraction = !result.unaided && !hasExtraction(question);
   toast(message, {
-    action: { label: 'Undo', onClick: () => { ctx.store.undo(); ctx.render(); } },
+    action: offerExtraction
+      ? { label: 'Extract', onClick: () => openExtraction(ctx, question) }
+      : { label: 'Undo', onClick: () => { ctx.store.undo(); ctx.render(); } },
+    timeout: offerExtraction ? 12000 : 7000,
   });
 }
 
-function writeUp(ctx, question) {
-  let noteId = null;
-  ctx.commit('write-up note', (state) => {
-    const template = state.noteTemplates.find((t) => t.id === BUILTIN_TEMPLATE_IDS.question);
-    const note = makeNote({
-      title: question.title,
-      body: applyTemplate(template?.body ?? '', { title: question.title, date: ctx.today }),
-      templateId: template?.id ?? null,
-    });
-    state.notes.push(note);
-    noteId = note.id;
+// --- the extraction ---------------------------------------------------------
+//
+// Four fields, and the fourth is the point. This came out of the GRE tab, which
+// scheduled study days as well — GregMat already does that, so the scheduling
+// went and the format stayed. It applies to a SQL window function exactly as
+// well as it applied to a quant problem, so it is on every bank rather than one.
+
+/**
+ * Open the extraction editor for a question.
+ *
+ * The portable move is required *once the extraction has been started*, which
+ * is the honest version of the old GRE rule. Requiring it on a blank form would
+ * mean you could not add a question before attempting it; not requiring it at
+ * all would let the first three fields be filled in and the rule — the only
+ * part that transfers to a problem you have not seen — quietly skipped.
+ */
+export async function openExtraction(ctx, question) {
+  const current = question.extraction ?? makeExtraction();
+
+  const gave = el('textarea.textarea', { rows: 2, value: current.gave ?? '' , 'aria-label': 'What it gave and asked' });
+  const did = el('textarea.textarea', { rows: 2, value: current.did ?? '', 'aria-label': 'What I did' });
+  const broke = el('textarea.textarea', { rows: 2, value: current.broke ?? '', 'aria-label': 'Where it broke' });
+  const portable = el('input.input', {
+    value: current.portable ?? '',
+    placeholder: 'e.g. "read the constraint before choosing the join"',
+    'aria-label': 'The portable move',
+  });
+  const cause = el('select.select', { 'aria-label': 'Cause' }, [
+    el('option', { value: '', text: '—', selected: !current.cause }),
+    ...MISS_CAUSES.map((value) => el('option', { value, text: value, selected: value === current.cause })),
+  ]);
+  const errorNode = el('div.field__error');
+
+  const result = await openDialog({
+    title: 'Extraction',
+    wide: true,
+    body: el('div.stack', [
+      el('div.break', { text: question.title }),
+      el('label.field', [
+        el('span.field__label', { text: 'What it gave and what it asked' }),
+        gave,
+        el('span.field__hint', { text: 'In your own words, one line. If you cannot restate it, that is the finding.' }),
+      ]),
+      el('label.field', [el('span.field__label', { text: 'What I did' }), did]),
+      el('label.field', [
+        el('span.field__label', { text: 'Where it broke' }),
+        broke,
+        el('span.field__hint', { text: 'Or, if you got it right, what the faster route was. A right answer reached the slow way is a miss you did not notice.' }),
+      ]),
+      el('label.field', [
+        el('span.field__label', { text: 'The portable move' }),
+        portable,
+        el('span.field__hint', {
+          text: 'Roughly six words, and about problems in general rather than this one. Good: "check the base case before the recursion". Bad: "remember that question 14 uses a CTE".',
+        }),
+      ]),
+      el('label.field', [
+        el('span.field__label', { text: 'Cause' }),
+        cause,
+        el('span.field__hint', { text: 'Optional. Four causes because they need four different responses.' }),
+      ]),
+      errorNode,
+    ]),
+    footer: (close) => [
+      el('button.btn', { type: 'button', text: 'Cancel', onclick: () => close(null) }),
+      el('button.btn.btn--primary', {
+        type: 'button',
+        text: 'Save',
+        onclick: () => {
+          const values = {
+            gave: gave.value.trim(),
+            did: did.value.trim(),
+            broke: broke.value.trim(),
+            portable: portable.value.trim(),
+            cause: cause.value || null,
+          };
+          const started = values.gave || values.did || values.broke;
+          if (started && !values.portable) {
+            errorNode.textContent =
+              'Write the portable move. It is the only part that reaches a problem you have not seen — if you cannot write it, the extraction has not happened yet.';
+            portable.focus();
+            return;
+          }
+          close(values);
+        },
+      }),
+    ],
+  });
+  if (!result) return;
+
+  ctx.commit('extraction', () => {
+    question.extraction = makeExtraction(result);
   }, { undoable: false });
-  ctx.navigate(`#/notes/${noteId}`);
 }
 
 // --- add and edit -----------------------------------------------------------
@@ -392,6 +505,7 @@ async function editQuestion(ctx, question) {
       { key: 'dueDate', label: 'Next review', type: 'date', hint: 'Editing this overrides the scheduler.' },
       ...bankFieldSpecs(question.bank),
     ],
+    extraAction: { label: 'Extraction…', onClick: () => openExtraction(ctx, question) },
     values: {
       ...question,
       tags: (question.tags ?? []).join(', '),

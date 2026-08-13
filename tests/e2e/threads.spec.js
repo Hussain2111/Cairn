@@ -135,14 +135,14 @@ test('reordering stages recomputes what is locked', async ({ page }) => {
   await expect(stages.nth(1)).toHaveAttribute('data-state', 'available');
 
   // Move the completed stage to the end: B is now first and A stays complete.
-  await stages.nth(0).getByRole('button', { name: '↓' }).click();
+  await stages.nth(0).getByRole('button', { name: 'Move A down' }).click();
   await expect(page.locator('.stage').nth(0)).toContainText('B');
   await expect(page.locator('.stage').nth(0)).toHaveAttribute('data-state', 'available');
   await expect(page.locator('.stage').nth(1)).toHaveAttribute('data-state', 'complete');
 });
 
-test('deleting a stage with completed work offers to archive instead', async ({ page }) => {
-  await newThread(page, { name: 'Archive me', stage: 'Stage one', doneWhen: 'done when done' });
+test('deleting a stage with completed work warns, and deletes it — there is no archive', async ({ page }) => {
+  await newThread(page, { name: 'Delete me', stage: 'Stage one', doneWhen: 'done when done' });
   await addStep(page, 0, 'work');
   await addTask(page, 'work', 'finished task');
   await page.locator('.task__box').first().click();
@@ -150,12 +150,53 @@ test('deleting a stage with completed work offers to archive instead', async ({ 
   await page.locator('.stage').nth(0).locator('.stage__tools').getByRole('button', { name: 'Delete stage' }).click();
   const dialog = page.locator('dialog');
   await expect(dialog).toContainText('contains completed work');
-  await dialog.getByRole('button', { name: 'Archive instead' }).click();
+  await expect(dialog).not.toContainText('Archive instead');
+  await dialog.getByRole('button', { name: 'Delete', exact: true }).click();
 
   await expect(page.locator('.stage')).toHaveCount(0);
   await page.goto('/#/settings');
-  await expect(page.getByText('Archived stages')).toBeVisible();
-  await expect(page.getByText('Stage one')).toBeVisible();
+  await expect(page.locator('#view')).not.toContainText('Archived');
+});
+
+test('a thread is active or done, and marking it done takes it off Today', async ({ page }) => {
+  await newThread(page, { name: 'Finish me', stage: 'Stage one', doneWhen: 'x' });
+  await addStep(page, 0, 'work');
+  await addTask(page, 'work', 'a live task');
+
+  await page.goto('/#/today');
+  await expect(page.locator('.upnext')).toContainText('Finish me');
+
+  await page.goto('/#/threads');
+  await page.locator('.card', { hasText: 'Finish me' }).getByRole('link', { name: 'Open' }).click();
+  await page.getByRole('button', { name: 'Edit', exact: true }).first().click();
+  const dialog = page.locator('dialog');
+  await expect(dialog).not.toContainText('Archived');
+  await dialog.getByLabel('Status').selectOption('done');
+  await dialog.getByRole('button', { name: 'Save' }).click();
+
+  await page.goto('/#/today');
+  await expect(page.locator('#view')).not.toContainText('Finish me');
+
+  // Still there, under Done, with its history.
+  await page.goto('/#/threads');
+  await expect(page.locator('#view')).not.toContainText('Finish me');
+  await page.getByRole('link', { name: /^Done/ }).click();
+  await expect(page.locator('.card', { hasText: 'Finish me' })).toBeVisible();
+});
+
+test('deleting a thread deletes it, with no archive offered', async ({ page }) => {
+  await newThread(page, { name: 'Gone for good', stage: 'Stage one', doneWhen: 'x' });
+  await page.getByRole('button', { name: 'Edit', exact: true }).first().click();
+  await page.locator('dialog').getByRole('button', { name: 'Delete thread' }).click();
+  const confirmDialog = page.locator('dialog');
+  await expect(confirmDialog).not.toContainText('Archive instead');
+  await expect(confirmDialog).toContainText('mark it done instead');
+  await confirmDialog.getByRole('button', { name: 'Delete everything' }).click();
+
+  await page.goto('/#/threads');
+  await expect(page.locator('#view')).not.toContainText('Gone for good');
+  await page.goto('/#/threads?filter=done');
+  await expect(page.locator('#view')).not.toContainText('Gone for good');
 });
 
 test('force-completing a stage with open tasks warns and is recorded', async ({ page }) => {
@@ -244,7 +285,8 @@ test('a completed task stops reading as overdue', async ({ page }) => {
   await expect(page.locator('.task')).toHaveClass(/task--done/);
   await expect(meta.locator('.tag--danger')).toHaveCount(0);
   await expect(meta).not.toContainText('overdue');
-  await expect(meta).toContainText('due 1 Jan');
+  await expect(meta).not.toContainText('1 Jan', 'the deadline is not information once it is met');
+  await expect(meta).toContainText('Done');
 
   // And it comes back the moment the task is unticked.
   await page.locator('.task__box').click();
@@ -275,4 +317,84 @@ test('the task editor says that Due and Estimate are optional', async ({ page })
   // And saving with both blank is fine.
   await dialog.getByRole('button', { name: 'Save' }).click();
   await expect(page.locator('.task__meta .tag')).toHaveCount(0);
+});
+
+test('ticking a task below the fold does not throw the page back to the top', async ({ page }) => {
+  await newThread(page, { name: 'Long thread', stage: 'Stage one', doneWhen: 'x' });
+  await addStep(page, 0, 'work');
+
+  // Enough tasks that the last one is well below the fold.
+  const box = page.getByPlaceholder('Add a task');
+  for (let i = 1; i <= 40; i += 1) {
+    await box.fill(`task ${i}`);
+    await box.press('Enter');
+  }
+
+  const last = page.locator('.task').nth(39);
+  await last.scrollIntoViewIfNeeded();
+  const before = await page.evaluate(() => window.scrollY);
+  expect(before).toBeGreaterThan(200);
+
+  await last.locator('.task__box').click();
+  await expect(last).toHaveClass(/task--done/);
+
+  const after = await page.evaluate(() => window.scrollY);
+  expect(Math.abs(after - before)).toBeLessThan(5);
+  // The row is still where the eye was, not scrolled off the top.
+  await expect(last).toBeInViewport();
+});
+
+test('navigating to another view still starts at the top', async ({ page }) => {
+  await newThread(page, { name: 'Scrolled', stage: 'Stage one', doneWhen: 'x' });
+  await addStep(page, 0, 'work');
+  const box = page.getByPlaceholder('Add a task');
+  for (let i = 1; i <= 40; i += 1) {
+    await box.fill(`task ${i}`);
+    await box.press('Enter');
+  }
+  await page.locator('.task').nth(39).scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(200);
+
+  await page.goto('/#/questions');
+  await expect(page.getByRole('heading', { name: 'Questions', level: 1 })).toBeVisible();
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
+test('moving a stage says which stages it locked', async ({ page }) => {
+  // A finished first stage, so the second is workable and the third is not.
+  await newThread(page, { name: 'Reorder', stage: 'Alpha', doneWhen: 'x' });
+  await addStep(page, 0, 'work');
+  await addTask(page, 'work', 'alpha task');
+  await page.locator('.task__box').first().click();
+  await addStage(page, { title: 'Beta', doneWhen: 'y' });
+  await addStage(page, { title: 'Gamma', doneWhen: 'z' });
+
+  const stages = page.locator('.stage');
+  await expect(stages.nth(1)).toHaveAttribute('data-state', 'available');
+  await expect(stages.nth(2)).toHaveAttribute('data-state', 'locked');
+
+  // Pull Gamma above Beta: Gamma becomes workable, Beta stops being.
+  await stages.nth(2).getByRole('button', { name: 'Move Gamma up' }).click();
+
+  const said = page.locator('.toast', { hasText: 'That move' });
+  await expect(said).toContainText('locked "Beta"');
+  await expect(said).toContainText('unlocked "Gamma"');
+  await expect(page.locator('.stage').nth(1)).toHaveAttribute('data-state', 'available');
+  await expect(page.locator('.stage').nth(2)).toHaveAttribute('data-state', 'locked');
+});
+
+test('reordering two finished stages says nothing, because nothing changed', async ({ page }) => {
+  // Both complete, so swapping them cannot lock or unlock anything.
+  await newThread(page, { name: 'Quiet move', stage: 'Alpha', doneWhen: 'x' });
+  await addStage(page, { title: 'Beta', doneWhen: 'y' });
+  await addStage(page, { title: 'Gamma', doneWhen: 'z' });
+  for (const index of [0, 1]) {
+    await page.locator('.stage').nth(index).getByRole('button', { name: 'Mark complete' }).click();
+  }
+  await expect(page.locator('.stage').nth(2)).toHaveAttribute('data-state', 'available');
+
+  await page.locator('.stage').nth(1).getByRole('button', { name: 'Move Beta up' }).click();
+  await expect(page.locator('.stage').nth(0)).toContainText('Beta');
+  await expect(page.locator('.toast', { hasText: 'That move' })).toHaveCount(0);
+  await expect(page.locator('.stage').nth(2)).toHaveAttribute('data-state', 'available');
 });

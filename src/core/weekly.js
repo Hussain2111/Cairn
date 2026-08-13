@@ -11,7 +11,7 @@ import {
   stampToDate,
   withinRange,
 } from './dates.js';
-import { walkTasks, threadProgress, threadStall, isStageComplete } from './threads.js';
+import { walkTasks, threadProgress, isStageComplete, isActive, lastCompletionDate } from './threads.js';
 import { weeklyDistribution } from './timeblocks.js';
 import { pipelineStats } from './pipelines.js';
 import { weekProgress, sessionsInWeek, sessionTotals } from './gym.js';
@@ -23,7 +23,7 @@ export function generateWeeklyReview(state, { today = todayISO(), weekStart = nu
 
   const threads = [];
   for (const thread of state?.threads ?? []) {
-    if (thread.archived) continue;
+    if (!isActive(thread)) continue;
     const completed = [];
     for (const { task, stage, step } of walkTasks(thread)) {
       const doneDate = task.done ? stampToDate(task.doneAt) : null;
@@ -32,14 +32,13 @@ export function generateWeeklyReview(state, { today = todayISO(), weekStart = nu
     const stagesCompleted = (thread.stages ?? []).filter(
       (s) => isStageComplete(s) && inWeek(stampToDate(s.forceCompletedAt) || lastStageCompletion(s)),
     );
-    const stall = threadStall(thread, { today, days: state?.settings?.stallDays ?? 14 });
     threads.push({
       thread,
       completed: completed.sort((a, b) => a.date.localeCompare(b.date)),
       stagesCompleted,
       moved: completed.length > 0,
       progress: threadProgress(thread),
-      stall,
+      lastCompletion: lastCompletionDate(thread),
     });
   }
 
@@ -79,7 +78,6 @@ export function generateWeeklyReview(state, { today = todayISO(), weekStart = nu
     generatedOn: today,
     threads,
     moved: threads.filter((t) => t.moved),
-    stalled: threads.filter((t) => t.stall.stalled),
     didNotMove: threads.filter((t) => !t.moved),
     questions,
     pipeline,
@@ -135,20 +133,11 @@ export function weeklyReviewMarkdown(report) {
       }
     } else {
       lines.push(
-        `- **Did not move.** Last completion: ${entry.stall.lastCompletion ? formatDate(entry.stall.lastCompletion) : 'never'} (${entry.stall.idleDays}d idle)`,
+        `- **Did not move.** Last completion: ${entry.lastCompletion ? formatDate(entry.lastCompletion) : 'never'}`,
       );
     }
     if (entry.stagesCompleted.length) {
       lines.push(`- Stages closed: ${entry.stagesCompleted.map((s) => s.title).join(', ')}`);
-    }
-    lines.push('');
-  }
-
-  if (report.stalled.length) {
-    lines.push('## Stalled');
-    lines.push('');
-    for (const entry of report.stalled) {
-      lines.push(`- **${entry.thread.name}** — ${entry.stall.idleDays}d with no completed task`);
     }
     lines.push('');
   }
@@ -206,7 +195,7 @@ export function weeklyReviewMarkdown(report) {
     lines.push('## Reading');
     lines.push('');
     for (const book of report.reading) {
-      lines.push(`- ${book.title}${book.author ? ` — ${book.author}` : ''}: ${book.position}${book.unit === 'percent' ? '%' : ` / ${book.total ?? '?'}`}`);
+      lines.push(`- ${book.title}${book.author ? ` — ${book.author}` : ''}${book.page ? `: page ${book.page}` : ''}`);
     }
     lines.push('');
   }

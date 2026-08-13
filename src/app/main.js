@@ -1,27 +1,23 @@
-// Application shell: store wiring, routing, navigation, global banners,
-// keyboard shortcuts and theme.
+// Application shell: store wiring, routing, navigation, global banners and
+// theme.
 
 import { Store } from './store.js';
 import { el, clear, toast, confirm, openDialog, downloadFile } from './ui.js';
 import { todayISO } from '../core/dates.js';
 import { reviewQueue } from '../core/srs.js';
 import { needsAction } from '../core/pipelines.js';
-import { stalledThreads } from '../core/threads.js';
-import { retrievalQueue } from '../core/gre.js';
+import { activeThreads } from '../core/threads.js';
 import { renderImportReport } from './views/settings.js';
 
 import * as todayView from './views/today.js';
 import * as threadsView from './views/threads.js';
 import * as threadView from './views/thread.js';
 import * as questionsView from './views/questions.js';
-import * as notesView from './views/notes.js';
 import * as pipelinesView from './views/pipelines.js';
 import * as timeView from './views/time.js';
 import * as weeklyView from './views/weekly.js';
 import * as gymView from './views/gym.js';
-import * as greView from './views/gre.js';
 import * as readingView from './views/reading.js';
-import * as searchView from './views/search.js';
 import * as settingsView from './views/settings.js';
 
 const store = new Store({ storage: window.localStorage });
@@ -32,14 +28,11 @@ const VIEWS = {
   thread: threadView,
   questions: questionsView,
   review: questionsView,
-  notes: notesView,
   pipelines: pipelinesView,
   time: timeView,
   weekly: weeklyView,
   gym: gymView,
-  gre: greView,
   reading: readingView,
-  search: searchView,
   settings: settingsView,
 };
 
@@ -124,9 +117,7 @@ function renderSidebar() {
   const today = todayISO();
   const due = reviewQueue(state, { today }).length;
   const actions = needsAction(state, { today }).count;
-  const stalled = stalledThreads(state, { today }).length;
-  const activeThreads = state.threads.filter((t) => !t.archived).length;
-  const greDue = retrievalQueue(state, { today }).length;
+  const active = activeThreads(state).length;
 
   clear(sidebarNode);
   sidebarNode.appendChild(
@@ -137,43 +128,20 @@ function renderSidebar() {
       ]),
       el('nav.nav', { 'aria-label': 'Primary' }, [
         navLink('#/today', 'Today'),
-        navLink('#/threads', 'Threads', activeThreads || null, true),
+        navLink('#/threads', 'Threads', active || null, true),
         navLink('#/questions', 'Questions', due || null),
         navLink('#/pipelines', 'Pipelines', actions || null),
         el('div.nav__section', { text: 'Record' }),
-        navLink('#/notes', 'Notes', state.notes.length || null, true),
         navLink('#/time', 'Time'),
         navLink('#/weekly', 'Weekly review'),
         el('div.nav__section', { text: 'Keep going' }),
-        navLink('#/gre', 'GRE', greDue || null),
         navLink('#/gym', 'Gym', null, true),
         navLink('#/reading', 'Reading', state.reading.length || null, true),
       ]),
-      stalled
-        ? el('a.nav__link', { href: '#/threads?filter=stalled' }, [
-            el('span.tag.tag--danger', { text: `${stalled} stalled` }),
-          ])
-        : null,
     ]),
   );
 
-  // All three read as one list, so all three are the same component. Search and
-  // Shortcuts keep their handlers as buttons; only the styling is shared.
-  sidebarNode.appendChild(
-    el('div.sidebar__foot', [
-      el('button.nav__link', {
-        type: 'button',
-        text: 'Search',
-        onclick: () => navigate('#/search'),
-      }, [el('span.nav__key.mono', { text: '/' })]),
-      navLink('#/settings', 'Settings'),
-      el('button.nav__link', {
-        type: 'button',
-        text: 'Shortcuts',
-        onclick: showShortcuts,
-      }, [el('span.nav__key.mono', { text: '?' })]),
-    ]),
-  );
+  sidebarNode.appendChild(el('div.sidebar__foot', [navLink('#/settings', 'Settings')]));
 }
 
 // --- global banners ---------------------------------------------------------
@@ -283,13 +251,30 @@ function renderBanners() {
 // --- render -----------------------------------------------------------------
 
 let rendering = false;
+let lastRenderedHref = null;
 
+/**
+ * Re-render.
+ *
+ * Committing a change rebuilds the view, which replaces every node in it — and
+ * a replaced node has no scroll position, so the page snaps to the top. On a
+ * long thread that made ticking anything below the fold unusable: the row you
+ * were looking at vanished upwards the moment you touched it.
+ *
+ * So scrolling to the top is reserved for what it was actually for — arriving
+ * at a different view. A re-render of the view you are already on restores
+ * where you were, and puts the focus ring back on the element that had it, so
+ * tapping a checkbox leaves the keyboard where it was too.
+ */
 function render() {
   if (rendering) return;
   rendering = true;
   try {
     ctx.route = parseRoute();
     const view = VIEWS[ctx.route.name] ?? VIEWS.today;
+    const sameView = lastRenderedHref === ctx.route.href;
+    const scrollY = sameView ? window.scrollY : 0;
+    const refocus = sameView ? focusTarget(document.activeElement) : null;
     renderSidebar();
 
     clear(viewNode);
@@ -319,98 +304,77 @@ function render() {
     }
     viewNode.appendChild(content);
     document.title = view.title ? `${view.title(ctx)} · Cairn` : 'Cairn';
-    window.scrollTo({ top: 0 });
+    lastRenderedHref = ctx.route.href;
+
+    if (sameView) {
+      window.scrollTo({ top: scrollY });
+      restoreFocus(refocus);
+    } else {
+      window.scrollTo({ top: 0 });
+    }
   } finally {
     rendering = false;
   }
 }
 
-// --- keyboard ---------------------------------------------------------------
+/**
+ * Where the focus was, in terms that survive the view being rebuilt: the
+ * data-id of the row it was in, plus something that identifies the control
+ * within that row *by name*.
+ *
+ * By name, and not by position, because position is exactly what a re-render
+ * changes. Ticking a task adds a button to its step, so the nth control in that
+ * step is no longer the same control — restoring by index put the focus on a
+ * checkbox that the keystroke still in flight then activated, ticking a task
+ * nobody asked to tick. A control with no stable name is simply not restored:
+ * losing the focus ring is a small cost, and pressing the wrong button is not.
+ */
+function focusTarget(node) {
+  if (!(node instanceof HTMLElement) || !viewNode.contains(node)) return null;
+  const owner = node.closest('[data-id]');
+  if (!owner?.dataset.id) return null;
+  if (owner === node) return { id: owner.dataset.id, within: null };
 
-function isTyping(target) {
-  return (
-    target instanceof HTMLElement &&
-    (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)
-  );
+  const label = node.getAttribute('aria-label');
+  const placeholder = node.getAttribute('placeholder');
+  if (!label && !placeholder) return { id: owner.dataset.id, within: null };
+  const attribute = label ? 'aria-label' : 'placeholder';
+  // An attribute *value*, so quotes and backslashes are what need escaping —
+  // CSS.escape is for identifiers and would mangle the spaces.
+  const value = (label ?? placeholder).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return { id: owner.dataset.id, within: `[${attribute}="${value}"]` };
 }
 
-function showShortcuts() {
-  const rows = [
-    ['t', 'Today'],
-    ['r', 'Threads'],
-    ['q', 'Questions and the review queue'],
-    ['p', 'Pipelines'],
-    ['w', 'Weekly review'],
-    ['/', 'Search'],
-    ['a', 'Add a task (in a thread) or the view’s main action'],
-    ['x or Space', 'Tick the focused task'],
-    ['j / k', 'Move between tasks'],
-    ['⌘Z / Ctrl+Z', 'Undo'],
-    ['⇧⌘Z / Ctrl+Y', 'Redo'],
-    ['e', 'Export a backup'],
-    ['?', 'This list'],
-  ];
-  openDialog({
-    title: 'Keyboard',
-    body: el('div.shortcut-list', rows.flatMap(([key, label]) => [
-      el('kbd', { text: key }),
-      el('span', { text: label }),
-    ])),
-    footer: (close) => [el('button.btn', { type: 'button', text: 'Close', onclick: () => close() })],
-  });
+function restoreFocus(target) {
+  if (!target) return;
+  const owner = viewNode.querySelector(`[data-id="${CSS.escape(target.id)}"]`);
+  if (!owner) return;
+  const node = target.within ? owner.querySelector(target.within) : owner;
+  node?.focus?.({ preventScroll: true });
 }
+
+// --- undo -------------------------------------------------------------------
+//
+// The single-key navigation shortcuts and their cheat sheet are gone. Undo and
+// redo stay: they are not a shortcut for something on screen, they are the only
+// way to reverse a destructive action.
 
 window.addEventListener('keydown', (event) => {
   const mod = event.metaKey || event.ctrlKey;
+  if (!mod) return;
 
-  if (mod && event.key.toLowerCase() === 'z') {
+  if (event.key.toLowerCase() === 'z') {
     event.preventDefault();
     const label = event.shiftKey ? store.redo() : store.undo();
     render();
     toast(label ? (event.shiftKey ? `Redid: ${label}` : `Undid: ${label}`) : 'Nothing to undo');
     return;
   }
-  if (mod && event.key.toLowerCase() === 'y') {
+  if (event.key.toLowerCase() === 'y') {
     event.preventDefault();
     const label = store.redo();
     render();
     toast(label ? `Redid: ${label}` : 'Nothing to redo');
-    return;
-  }
-
-  if (isTyping(event.target) || mod || event.altKey) return;
-
-  switch (event.key) {
-    case 't':
-      navigate('#/today');
-      break;
-    case 'r':
-      navigate('#/threads');
-      break;
-    case 'q':
-      navigate('#/questions');
-      break;
-    case 'p':
-      navigate('#/pipelines');
-      break;
-    case 'w':
-      navigate('#/weekly');
-      break;
-    case '/':
-      event.preventDefault();
-      navigate('#/search');
-      break;
-    case '?':
-      showShortcuts();
-      break;
-    case 'e': {
-      downloadFile(store.exportFilename(), store.exportJSON());
-      toast('Backup exported');
-      break;
-    }
-    default:
-      // View-level shortcuts (a, x, j, k) are handled by the active view.
-      document.dispatchEvent(new CustomEvent('cairn:key', { detail: { key: event.key, event } }));
   }
 });
 

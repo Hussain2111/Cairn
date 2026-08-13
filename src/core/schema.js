@@ -7,11 +7,18 @@
 import { uid } from './ids.js';
 import { todayISO, nowStamp } from './dates.js';
 
-export const SCHEMA_VERSION = 7;
+export const SCHEMA_VERSION = 8;
 export const STORAGE_KEY = 'cairn.state';
 export const APP_VERSION = '1.0.0';
 
 export const THREAD_TYPES = ['project', 'study', 'pipeline', 'habit', 'reading'];
+
+/**
+ * A thread is being worked on, or it is finished. There is no third state:
+ * archiving was a way of keeping something around without deciding about it,
+ * and the deciding is the point.
+ */
+export const THREAD_STATUSES = ['active', 'done'];
 
 export const BANKS = ['sql', 'leetcode', 'gre'];
 
@@ -38,8 +45,8 @@ export const DIFFICULTIES = ['easy', 'medium', 'hard'];
 export const APPLICATION_STATUSES = ['applied', 'screening', 'interview', 'offer', 'rejected', 'ghosted'];
 export const APPLICATION_SOURCES = ['Hiring Cafe', 'LinkedIn', 'referral', 'direct', 'other'];
 export const OUTREACH_CHANNELS = ['LinkedIn', 'Threads', 'email', 'other'];
-export const READING_STATUSES = ['to read', 'reading', 'paused', 'finished', 'abandoned'];
-export const READING_SOURCES = ['manual', 'pdf'];
+/** Three states, in the order a book moves through them. */
+export const READING_STATUSES = ['to read', 'reading', 'finished'];
 
 /** The muscle groups an exercise trains. Fixed list, deliberately short. */
 export const MUSCLE_GROUPS = ['chest', 'back', 'shoulders', 'legs', 'arms', 'core'];
@@ -50,32 +57,28 @@ export const EXERCISE_STATUSES = ['active', 'dropped'];
 /** Whether pain showed up in the movement or afterwards. */
 export const PAIN_TIMING = ['during', 'after'];
 
-// --- GRE --------------------------------------------------------------------
-
-/** Why a problem was missed. Four causes, because they need four responses. */
-export const GRE_CAUSES = ['concept', 'format', 'timing', 'careless'];
+/**
+ * Why a question was missed. Four causes, because they need four responses.
+ * Came from the GRE log and applies just as well to a SQL join you got wrong.
+ */
+export const MISS_CAUSES = ['concept', 'format', 'timing', 'careless'];
 
 /**
- * The blocks a day can be made of.
+ * The extraction: what a question actually taught you, in four fields.
  *
- * This is a *template*, offered when the schedule is first seeded. It is not
- * the plan: the plan lives in the data, because it has an end date and will be
- * rewritten, and a plan compiled into the source cannot be.
+ * The fourth is the point — a rule about problems in general, roughly six
+ * words. Filling in the first three and leaving it blank is the failure mode
+ * the format exists to prevent, so the editor refuses that combination.
  */
-export const DEFAULT_GRE_BLOCKS = [
-  { code: 'A', name: 'Retrieval', minutes: 25, order: 0, pinFirst: true, notBeforeDay: 4,
-    description: 'Cold re-attempts of problems missed three or more days ago. Nothing to retrieve before day four.' },
-  { code: 'B', name: 'Concept', minutes: 70, order: 1,
-    description: 'Advance the study plan\'s modules.' },
-  { code: 'C', name: 'Deliberate problems', minutes: 65, order: 2, hasTopic: true,
-    description: 'One narrow slice: one question type, one topic, one difficulty band.' },
-  { code: 'D', name: 'Timed', minutes: 56, order: 3,
-    description: '26 minutes timed plus 30 of extraction. Scheduled days only.' },
-  { code: 'E1', name: 'Vocab', minutes: 20, order: 4, everyDay: true,
-    description: 'Every single day without exception, checkpoint days included.' },
-  { code: 'E2', name: 'Verbal problems', minutes: 40, order: 5, hasTopic: true },
-  { code: 'F', name: 'Log consolidation', minutes: 20, order: 6 },
-];
+export function makeExtraction(patch = {}) {
+  return { gave: '', did: '', broke: '', portable: '', cause: null, ...patch };
+}
+
+/** True once any of the four fields has been written in. */
+export function hasExtraction(question) {
+  const e = question?.extraction;
+  return !!e && ['gave', 'did', 'broke', 'portable'].some((k) => String(e[k] ?? '').trim());
+}
 
 /**
  * Seeded on first use so a session can be logged immediately instead of typing
@@ -110,17 +113,11 @@ export const STARTER_EXERCISES = [
 export const DEFAULT_SETTINGS = {
   theme: 'system',
   srsIntervals: [0, 2, 7, 21],
-  stallDays: 14,
   pipelineIdleDays: 14,
   dayStartHour: 8,
   dayEndHour: 22,
   /** Gym sessions per week. The one number the week is judged against. */
   gymWeeklyTarget: 4,
-  /**
-   * Retrieval spacing for the GRE problem log: re-attempt at +3 days, then
-   * +10. Same scheduler as the question banks, different chain.
-   */
-  greIntervals: [3, 10],
 };
 
 // --- factories --------------------------------------------------------------
@@ -168,7 +165,7 @@ export function makeThread({ name = '', type = 'project', description = '' } = {
     name,
     type: THREAD_TYPES.includes(type) ? type : 'project',
     description,
-    archived: false,
+    status: 'active',
     notes: '',
     links: [],
     stages: [],
@@ -180,7 +177,7 @@ export function makeAttempt({ date = todayISO(), unaided = false, minutes = null
   return { id: uid('att'), date, unaided: !!unaided, minutes: minutes ?? null, hesitation };
 }
 
-export function makeQuestion({ bank = 'sql', title = '', url = '', tags = [], difficulty = 'medium', fields = {} } = {}) {
+export function makeQuestion({ bank = 'sql', title = '', url = '', tags = [], difficulty = 'medium', fields = {}, extraction = null } = {}) {
   const created = todayISO();
   return {
     id: uid('q'),
@@ -190,6 +187,8 @@ export function makeQuestion({ bank = 'sql', title = '', url = '', tags = [], di
     tags: [...tags],
     difficulty: DIFFICULTIES.includes(difficulty) ? difficulty : 'medium',
     fields: { ...fields },
+    /** Available on every bank, not just the GRE it was built for. */
+    extraction: makeExtraction(extraction ?? {}),
     notes: '',
     attempts: [],
     intervalIndex: 0,
@@ -391,32 +390,22 @@ export function makeGreEntry(patch = {}) {
   };
 }
 
-export function makeBookmark({ page = 1, note = '' } = {}) {
-  return { id: uid('bm'), page, note, createdAt: nowStamp() };
-}
-
 /**
- * A book. `source: 'pdf'` means the bytes live in IndexedDB under this record's
- * id — everything here stays small enough for localStorage, including the
- * cover, which is a deliberately tiny JPEG.
+ * A book, as a line in a list. Cairn does not open it — that happens on paper
+ * or on a device made for it — so what is stored is what you would want to
+ * look up: what it is, where you are, and what you thought.
  */
 export function makeReading(patch = {}) {
   return {
     id: uid('read'),
     title: '',
     author: '',
-    source: 'manual',
-    fileName: '',
-    fileSize: 0,
-    pageCount: null,
-    cover: null,
-    position: 0,
-    unit: 'page',
-    total: null,
     status: 'reading',
+    /** Optional, and only meaningful while reading. */
+    page: null,
+    /** Optional, 1–5, and only meaningful once finished. */
+    rating: null,
     notes: '',
-    bookmarks: [],
-    lastOpenedAt: null,
     updatedAt: todayISO(),
     createdAt: todayISO(),
     ...patch,
@@ -443,25 +432,9 @@ export function makeTimeBlock(patch = {}) {
   };
 }
 
-export function makeNote({ title = '', body = '', templateId = null, attach = null } = {}) {
-  return {
-    id: uid('note'),
-    title,
-    body,
-    templateId,
-    attach: attach ? { ...attach } : null,
-    createdAt: nowStamp(),
-    updatedAt: nowStamp(),
-  };
-}
-
-export function makeTemplate({ name = '', body = '', builtin = false, id = null } = {}) {
-  return { id: id || uid('tpl'), name, body, builtin };
-}
-
 // --- empty state ------------------------------------------------------------
 
-export function createEmptyState(templates = []) {
+export function createEmptyState() {
   return {
     schemaVersion: SCHEMA_VERSION,
     meta: {
@@ -473,19 +446,12 @@ export function createEmptyState(templates = []) {
     },
     settings: { ...DEFAULT_SETTINGS, srsIntervals: [...DEFAULT_SETTINGS.srsIntervals] },
     threads: [],
-    archivedStages: [],
-    notes: [],
-    noteTemplates: templates,
     questions: [],
     applications: [],
     outreach: [],
     exercises: [],
     gymSessions: [],
     painRecords: [],
-    greBlocks: [],
-    grePhases: [],
-    greDays: [],
-    greEntries: [],
     reading: [],
     timeBlocks: [],
   };
@@ -494,19 +460,12 @@ export function createEmptyState(templates = []) {
 /** The collections every valid state must carry, used by the validator. */
 export const COLLECTIONS = [
   'threads',
-  'archivedStages',
-  'notes',
-  'noteTemplates',
   'questions',
   'applications',
   'outreach',
   'exercises',
   'gymSessions',
   'painRecords',
-  'greBlocks',
-  'grePhases',
-  'greDays',
-  'greEntries',
   'reading',
   'timeBlocks',
 ];

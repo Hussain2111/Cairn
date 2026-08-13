@@ -1,5 +1,5 @@
-// Thread tree logic: stage unlocking, progress rollup, "next unblocked task",
-// and stall detection.
+// Thread tree logic: stage unlocking, progress rollup and "next unblocked
+// task".
 //
 // Nothing here is stored. Unlock state and completion are *derived* on every
 // read from the two flags that are stored (`forceUnlocked`, `forceCompleted`)
@@ -10,6 +10,19 @@
 import { diffDays, todayISO, stampToDate } from './dates.js';
 
 export const STAGE_STATES = ['locked', 'available', 'in-progress', 'complete'];
+
+/**
+ * A thread is active or it is done. Everything that reads "the threads I am
+ * working on" goes through here rather than testing a flag inline, so there is
+ * one definition of active to change.
+ */
+export function isActive(thread) {
+  return thread?.status !== 'done';
+}
+
+export function activeThreads(state) {
+  return (state?.threads ?? []).filter(isActive);
+}
 
 // --- counts -----------------------------------------------------------------
 
@@ -217,13 +230,12 @@ export function nextTask(thread) {
 
 /** "Up next" across every active thread: one line each. */
 export function upNext(state) {
-  return (state?.threads ?? [])
-    .filter((t) => !t.archived)
+  return activeThreads(state)
     .map((thread) => ({ thread, ...nextTask(thread) }))
     .filter((entry) => entry.task || entry.blocked !== 'complete');
 }
 
-// --- dates and staleness ----------------------------------------------------
+// --- dates ------------------------------------------------------------------
 
 export function lastCompletionDate(thread) {
   let latest = null;
@@ -236,36 +248,6 @@ export function lastCompletionDate(thread) {
 }
 
 /**
- * A thread stalls when nothing in it has completed for `days`, while work
- * remains. With no completions ever, the clock runs from the thread's creation
- * date, so a thread that was set up and abandoned still surfaces.
- */
-export function threadStall(thread, { today = todayISO(), days = 14 } = {}) {
-  const counts = threadCounts(thread);
-  const remaining = counts.total - counts.done;
-  const complete = counts.total > 0 && remaining === 0;
-  const last = lastCompletionDate(thread);
-  const since = last || stampToDate(thread.createdAt) || today;
-  const idleDays = diffDays(since, today) ?? 0;
-  return {
-    thread,
-    lastCompletion: last,
-    idleDays,
-    stalled: !thread.archived && !complete && idleDays >= days,
-    everCompleted: !!last,
-  };
-}
-
-export function stalledThreads(state, { today = todayISO(), days } = {}) {
-  const limit = days ?? state?.settings?.stallDays ?? 14;
-  return (state?.threads ?? [])
-    .filter((t) => !t.archived)
-    .map((t) => threadStall(t, { today, days: limit }))
-    .filter((s) => s.stalled)
-    .sort((a, b) => b.idleDays - a.idleDays);
-}
-
-/**
  * Tasks with a due date that you could actually act on.
  *
  * Tasks inside a locked stage are excluded on purpose: a deadline you are not
@@ -273,8 +255,7 @@ export function stalledThreads(state, { today = todayISO(), days } = {}) {
  */
 export function actionableDueTasks(state, { today = todayISO(), horizonDays = 0 } = {}) {
   const out = [];
-  for (const thread of state?.threads ?? []) {
-    if (thread.archived) continue;
+  for (const thread of activeThreads(state)) {
     for (const entry of walkTasks(thread)) {
       const { task, stageIndex } = entry;
       if (task.done || !task.due) continue;
@@ -291,19 +272,35 @@ export function actionableDueTasks(state, { today = todayISO(), horizonDays = 0 
 // --- mutations that need care ----------------------------------------------
 
 /**
- * Move a stage within a thread. Unlock state is derived, so there is nothing to
- * recompute -- but the caller still needs the resulting state to report on,
- * e.g. "this move re-locked 2 stages".
+ * Move a stage within a thread.
+ *
+ * Unlock state is derived, so there is nothing to recompute -- but moving a
+ * completed stage below an incomplete one re-locks everything that was relying
+ * on it, and that happens silently unless someone says so. The states are
+ * captured per stage *id* rather than per position, because the positions are
+ * exactly what the move changes, so the caller can name which stages changed
+ * rather than counting how many are locked now.
  */
 export function moveStage(thread, from, to) {
   const stages = thread.stages ?? [];
-  if (from < 0 || from >= stages.length) return thread;
+  if (from < 0 || from >= stages.length) return { thread, moved: null, locked: [], unlocked: [] };
   const target = Math.max(0, Math.min(stages.length - 1, to));
-  const before = stages.map((_, i) => stageState(thread, i));
+
+  const before = new Map(stages.map((stage, i) => [stage.id, stageState(thread, i)]));
   const [moved] = stages.splice(from, 1);
   stages.splice(target, 0, moved);
-  const after = stages.map((_, i) => stageState(thread, i));
-  return { thread, before, after };
+  const after = new Map(stages.map((stage, i) => [stage.id, stageState(thread, i)]));
+
+  const locked = [];
+  const unlocked = [];
+  for (const stage of stages) {
+    const was = before.get(stage.id);
+    const now = after.get(stage.id);
+    if (was === now) continue;
+    if (now === 'locked') locked.push(stage);
+    else if (was === 'locked') unlocked.push(stage);
+  }
+  return { thread, moved, from, to: target, before, after, locked, unlocked };
 }
 
 /** Tick or untick a task, keeping doneAt honest. */

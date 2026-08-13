@@ -6,7 +6,7 @@
 
 import { el, tag, icon, empty, toast } from '../ui.js';
 import { pageHead, dueTag } from './shared.js';
-import { upNext, actionableDueTasks, stalledThreads } from '../../core/threads.js';
+import { upNext, actionableDueTasks } from '../../core/threads.js';
 import { reviewQueue } from '../../core/srs.js';
 import { needsAction, describeReason } from '../../core/pipelines.js';
 import { weekProgress, sessionsInWeek } from '../../core/gym.js';
@@ -27,7 +27,6 @@ export function render(ctx) {
   const dueTasks = actionableDueTasks(ctx.state, { today });
   const blocks = blocksForDate(ctx.state, today);
   const gym = weekProgress(ctx.state, today);
-  const stalled = stalledThreads(ctx.state, { today });
 
   return el('div', [
     pageHead('Today', {
@@ -37,8 +36,6 @@ export function render(ctx) {
         el('a.btn', { href: '#/weekly', text: 'Weekly review' }),
       ],
     }),
-
-    stalled.length ? stalledBanner(stalled) : null,
 
     // 1. Up next.
     el('section.section', [
@@ -119,20 +116,6 @@ export function render(ctx) {
       ]),
       gymRow(ctx, gym, today),
     ]),
-  ]);
-}
-
-function stalledBanner(stalled) {
-  return el('div.banner.banner--warn', { style: { marginBottom: 'var(--sp-4)' } }, [
-    el('div.banner__body', [
-      el('div.banner__title', {
-        text: `${stalled.length} thread${stalled.length > 1 ? 's have' : ' has'} not moved`,
-      }),
-      el('div.banner__text', {
-        text: stalled.map((s) => `${s.thread.name} (${s.idleDays}d)`).join(' · '),
-      }),
-    ]),
-    el('a.btn.btn--sm', { href: '#/threads?filter=stalled', text: 'Look at them' }),
   ]);
 }
 

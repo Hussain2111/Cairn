@@ -3,13 +3,12 @@ import assert from 'node:assert/strict';
 
 import { generateWeeklyReview, weeklyReviewMarkdown } from '../../src/core/weekly.js';
 import { weeklyDistribution, blockMinutes, plannedMinutes, loggedMinutes, overlaps, dayTotals } from '../../src/core/timeblocks.js';
-import { search } from '../../src/core/search.js';
 import { createEmptyState, makeThread, makeStage, makeStep, makeTask, makeQuestion, makeApplication, makeTimeBlock, makeExercise, makeGymSession, makeSessionExercise, makeSet } from '../../src/core/schema.js';
 
 const TODAY = '2026-08-07'; // Friday; the week runs Sun 02 -> Sat 08
 
 function fixture() {
-  const state = createEmptyState([]);
+  const state = createEmptyState();
 
   const thread = makeThread({ name: 'Compiler' });
   thread.createdAt = '2026-05-01T09:00:00';
@@ -136,11 +135,6 @@ test('the review counts applications sent inside the week only', () => {
   assert.equal(report.pipeline.applicationsSent, 1);
 });
 
-test('the review flags stalled threads', () => {
-  const report = generateWeeklyReview(fixture(), { today: TODAY });
-  assert.deepEqual(report.stalled.map((t) => t.thread.name), ['GRE prep']);
-});
-
 test('gym progress for the week is included, with the sessions it counted', () => {
   const state = fixture();
   const bench = makeExercise({ name: 'Bench press', muscle: 'chest' });
@@ -178,42 +172,7 @@ test('the markdown export carries the substance of the report', () => {
 });
 
 test('a week with nothing in it still produces a readable report', () => {
-  const md = weeklyReviewMarkdown(generateWeeklyReview(createEmptyState([]), { today: TODAY }));
+  const md = weeklyReviewMarkdown(generateWeeklyReview(createEmptyState(), { today: TODAY }));
   assert.match(md, /_No active threads\._/);
   assert.doesNotMatch(md, /undefined/);
-});
-
-// --- search -----------------------------------------------------------------
-
-test('search reaches tasks, questions, applications and hesitations', () => {
-  const state = fixture();
-  assert.ok(search(state, 'integer').some((r) => r.type === 'task' && r.title === 'Integer literals'));
-  assert.ok(search(state, 'window').some((r) => r.type === 'question'));
-  assert.ok(search(state, 'acme').some((r) => r.type === 'application'));
-  assert.ok(search(state, 'frame clause').some((r) => r.type === 'question'), 'what I hesitated on is searchable');
-  assert.ok(search(state, 'lexer').some((r) => r.type === 'stage'));
-});
-
-test('search needs at least two characters and returns routes to jump to', () => {
-  const state = fixture();
-  assert.deepEqual(search(state, 'a'), []);
-  const hit = search(state, 'integer')[0];
-  assert.match(hit.route, /^#\/thread\//);
-});
-
-test('a ranking bonus never turns a non-match into a result', () => {
-  // The bonus applied to titles used to be added unconditionally, which made
-  // every thread, note and question match every query.
-  const state = fixture();
-  const results = search(state, 'frame clause');
-  assert.deepEqual(results.map((r) => r.type), ['question']);
-  assert.deepEqual(search(state, 'zzzzzz'), []);
-});
-
-test('search ranks exact title matches above body matches', () => {
-  const state = createEmptyState([]);
-  state.notes.push({ id: 'n1', title: 'Parser', body: 'nothing relevant', attach: null });
-  state.notes.push({ id: 'n2', title: 'Unrelated', body: 'a long note that mentions parser somewhere inside it', attach: null });
-  const results = search(state, 'parser');
-  assert.equal(results[0].id, 'n1');
 });

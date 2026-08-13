@@ -11,6 +11,7 @@ import {
   OUTREACH_CHANNELS,
 } from '../../core/schema.js';
 import { formatDate, todayISO } from '../../core/dates.js';
+import { openApplicationImport } from './app-import.js';
 
 export function title() {
   return 'Pipelines';
@@ -27,9 +28,12 @@ export function render(ctx) {
       sub: `${ctx.state.applications.length} application(s) · ${ctx.state.outreach.length} contact(s)`,
       actions: [
         tab === 'outreach'
+          ? null
+          : el('button.btn', { type: 'button', text: 'Import spreadsheet', onclick: () => openApplicationImport(ctx) }),
+        tab === 'outreach'
           ? el('button.btn.btn--primary', { type: 'button', text: 'Log outreach', onclick: () => editOutreach(ctx, null) })
           : el('button.btn.btn--primary', { type: 'button', text: 'Log application', onclick: () => editApplication(ctx, null) }),
-      ],
+      ].filter(Boolean),
     }),
 
     actions.count

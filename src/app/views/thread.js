@@ -13,9 +13,10 @@ import {
   canStartStage,
   moveStage,
   nextTask,
-  threadStall,
+  lastCompletionDate,
+  isActive,
 } from '../../core/threads.js';
-import { makeStage, makeStep, makeTask, THREAD_TYPES } from '../../core/schema.js';
+import { makeStage, makeStep, makeTask, THREAD_TYPES, THREAD_STATUSES } from '../../core/schema.js';
 import { nowStamp, formatDate, formatDuration } from '../../core/dates.js';
 import { activityThreadId } from '../../core/activities.js';
 
@@ -43,7 +44,7 @@ export function render(ctx) {
 
   const focusId = ctx.route.query.get('focus');
   const progress = threadProgress(thread);
-  const stall = threadStall(thread, { today: ctx.today, days: ctx.state.settings.stallDays });
+  const lastCompletion = lastCompletionDate(thread);
   const next = nextTask(thread);
 
   const view = el('div', [
@@ -52,7 +53,6 @@ export function render(ctx) {
       actions: [
         el('button.btn', { type: 'button', text: 'Add stage', onclick: () => addStage(ctx, thread) }),
         el('button.btn', { type: 'button', text: 'Edit', onclick: () => editThread(ctx, thread) }),
-        el('a.btn', { href: `#/notes?attach=thread:${thread.id}`, text: 'Notes' }),
       ],
     }),
 
@@ -62,11 +62,10 @@ export function render(ctx) {
           tag(thread.type),
           tag(`${progress.done}/${progress.total} tasks`),
           tag(`${progress.stagesComplete}/${progress.stages} stages`),
-          thread.archived ? tag('archived', 'locked') : null,
-          stall.stalled ? tag(`stalled ${stall.idleDays}d`, 'danger') : null,
+          isActive(thread) ? null : tag('done', 'teal'),
           el('div.spacer'),
           el('span.section__meta', {
-            text: stall.lastCompletion ? `last completion ${formatDate(stall.lastCompletion)}` : 'nothing completed yet',
+            text: lastCompletion ? `last completion ${formatDate(lastCompletion)}` : 'nothing completed yet',
           }),
         ]),
         meter(progress.ratio, progress.ratio === 1 ? 'complete' : ''),
@@ -102,7 +101,6 @@ export function render(ctx) {
           )]),
   ]);
 
-  wireKeyboard(ctx, thread, view);
   if (focusId) {
     requestAnimationFrame(() => {
       const target = view.querySelector(`[data-id="${CSS.escape(focusId)}"]`);
@@ -190,10 +188,22 @@ function renderStage(ctx, thread, stage, index, focusId) {
           onclick: () => editStage(ctx, thread, stage),
         }),
         index > 0
-          ? el('button.btn.btn--ghost.btn--sm', { type: 'button', text: '↑', title: 'Move up', onclick: () => reorder(ctx, thread, index, index - 1) })
+          ? el('button.btn.btn--ghost.btn--sm', {
+              type: 'button',
+              text: '↑',
+              title: 'Move up',
+              'aria-label': `Move ${stage.title} up`,
+              onclick: () => reorder(ctx, thread, index, index - 1),
+            })
           : null,
         index < thread.stages.length - 1
-          ? el('button.btn.btn--ghost.btn--sm', { type: 'button', text: '↓', title: 'Move down', onclick: () => reorder(ctx, thread, index, index + 1) })
+          ? el('button.btn.btn--ghost.btn--sm', {
+              type: 'button',
+              text: '↓',
+              title: 'Move down',
+              'aria-label': `Move ${stage.title} down`,
+              onclick: () => reorder(ctx, thread, index, index + 1),
+            })
           : null,
         !unlocked
           ? el('button.btn.btn--sm', { type: 'button', text: 'Force unlock', onclick: () => forceUnlock(ctx, thread, stage) })
@@ -429,14 +439,33 @@ async function editStage(ctx, thread, stage) {
   }, { undoable: false });
 }
 
+/**
+ * Move a stage up or down.
+ *
+ * Order decides what is locked, so a move can lock work you were in the middle
+ * of — put a completed stage below an incomplete one and everything after it
+ * re-locks. That is the whole reason the ordering is meaningful, and it would
+ * otherwise happen with no acknowledgement at all, so the affected stages are
+ * named rather than counted.
+ */
 function reorder(ctx, thread, from, to) {
   ctx.commit('reorder stages', () => {
-    const { after } = moveStage(thread, from, to);
-    const relocked = after.filter((s) => s === 'locked').length;
-    if (relocked) {
-      setTimeout(() => toast(`${relocked} stage(s) are locked in the new order.`), 0);
+    const { locked, unlocked } = moveStage(thread, from, to);
+    const parts = [];
+    if (locked.length) parts.push(`locked ${listNames(locked)}`);
+    if (unlocked.length) parts.push(`unlocked ${listNames(unlocked)}`);
+    if (parts.length) {
+      const message = `That move ${parts.join(' and ')}.`;
+      // After the commit's own toast, so it is not immediately replaced.
+      setTimeout(() => toast(message, { variant: locked.length ? 'danger' : '', timeout: 8000 }), 0);
     }
   });
+}
+
+function listNames(stages) {
+  const names = stages.map((s) => `"${s.title}"`);
+  if (names.length <= 2) return names.join(' and ');
+  return `${names.slice(0, 2).join(', ')} and ${names.length - 2} more`;
 }
 
 function forceUnlock(ctx, thread, stage) {
@@ -484,20 +513,12 @@ async function deleteStage(ctx, thread, stage, index) {
   const answer = await confirm({
     title: hasWork ? 'This stage contains completed work' : 'Delete this stage?',
     message: hasWork
-      ? `"${stage.title}" has ${progress.done} completed task(s). Archiving keeps the record — it leaves the thread but stays in your data and in past weekly reviews.`
+      ? `"${stage.title}" has ${progress.done} completed task(s), and deleting it takes them with it — including out of past weekly reviews. This can be undone.`
       : `"${stage.title}" and its ${progress.total} task(s) will be removed. This can be undone.`,
     confirmLabel: 'Delete',
-    extraLabel: hasWork ? 'Archive instead' : null,
   });
-  if (!answer) return;
+  if (answer !== 'confirm') return;
 
-  if (answer === 'extra') {
-    ctx.commit('archive stage', () => {
-      thread.stages.splice(index, 1);
-      ctx.state.archivedStages.push({ threadId: thread.id, threadName: thread.name, stage, archivedAt: nowStamp() });
-    }, { message: 'Stage archived' });
-    return;
-  }
   ctx.commit('delete stage', () => {
     thread.stages.splice(index, 1);
   });
@@ -630,13 +651,14 @@ async function editThread(ctx, thread) {
         el('option', { value: t, text: t, selected: t === thread.type })));
       const descInput = el('input.input', { value: thread.description ?? '' });
       const notesInput = el('textarea.textarea', { value: thread.notes, rows: 5 });
-      const archived = el('input', { type: 'checkbox', checked: !!thread.archived });
+      const statusSelect = el('select.select', { 'aria-label': 'Status' }, THREAD_STATUSES.map((value) =>
+        el('option', { value, text: value, selected: value === (thread.status ?? 'active') })));
       draft.read = () => ({
         name: nameInput.value.trim(),
         type: typeSelect.value,
         description: descInput.value.trim(),
         notes: notesInput.value,
-        archived: archived.checked,
+        status: statusSelect.value,
       });
       return el('div.stack', [
         el('label.field', [el('span.field__label', { text: 'Name' }), nameInput]),
@@ -644,9 +666,13 @@ async function editThread(ctx, thread) {
           el('label.field', [el('span.field__label', { text: 'Type' }), typeSelect]),
           el('label.field', [el('span.field__label', { text: 'Description' }), descInput]),
         ]),
+        el('label.field', [
+          el('span.field__label', { text: 'Status' }),
+          statusSelect,
+          el('span.field__hint', { text: 'Done threads keep their history and leave Today. There is no third state — delete what you do not want.' }),
+        ]),
         el('label.field', [el('span.field__label', { text: 'Notes' }), notesInput]),
         linkEditor(draft.links),
-        el('label.check', [archived, el('span', { text: 'Archived — hidden from Today and stall detection' })]),
       ]);
     },
     footer: (close) => [
@@ -662,15 +688,12 @@ async function editThread(ctx, thread) {
     const progress = threadProgress(thread);
     const answer = await confirm({
       title: 'Delete this thread?',
-      message: `"${thread.name}" holds ${progress.stages} stage(s) and ${progress.total} task(s), ${progress.done} of them completed. Archiving keeps the history and hides it from Today.`,
+      message:
+        `"${thread.name}" holds ${progress.stages} stage(s) and ${progress.total} task(s), ${progress.done} of them completed. ` +
+        'It is deleted outright — mark it done instead if you want to keep the record. This can be undone.',
       confirmLabel: 'Delete everything',
-      extraLabel: 'Archive instead',
     });
-    if (!answer) return;
-    if (answer === 'extra') {
-      ctx.commit('archive thread', () => { thread.archived = true; }, { message: 'Thread archived' });
-      return;
-    }
+    if (answer !== 'confirm') return;
     ctx.commit('delete thread', (state) => {
       const index = state.threads.findIndex((t) => t.id === thread.id);
       if (index >= 0) state.threads.splice(index, 1);
@@ -690,34 +713,4 @@ async function editThread(ctx, thread) {
     return;
   }
   ctx.commit('edit thread', () => Object.assign(thread, result, { links: draft.links }), { undoable: false });
-}
-
-// --- keyboard within the tree ----------------------------------------------
-
-function wireKeyboard(ctx, thread, view) {
-  const handler = (event) => {
-    const { key } = event.detail;
-    if (!document.body.contains(view)) {
-      document.removeEventListener('cairn:key', handler);
-      return;
-    }
-    const tasks = [...view.querySelectorAll('[data-task]')];
-    const current = document.activeElement?.dataset?.task ? document.activeElement : null;
-    const index = current ? tasks.indexOf(current) : -1;
-
-    if (key === 'j') {
-      tasks[Math.min(tasks.length - 1, index + 1)]?.focus();
-    } else if (key === 'k') {
-      tasks[Math.max(0, index - 1)]?.focus();
-    } else if (key === 'a') {
-      event.detail.event.preventDefault();
-      const next = nextTask(thread);
-      const target = next.task
-        ? view.querySelector(`[data-id="${CSS.escape(next.step?.id ?? '')}"] .inline-add .input`)
-        : view.querySelector('.inline-add .input');
-      if (target) target.focus();
-      else toast('Add a stage and a step first.');
-    }
-  };
-  document.addEventListener('cairn:key', handler);
 }

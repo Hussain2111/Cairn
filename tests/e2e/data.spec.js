@@ -16,7 +16,7 @@ async function seed(page) {
         name: 'Compiler',
         type: 'project',
         description: 'A toy language',
-        archived: false,
+        status: 'active',
         notes: 'notes here',
         links: [{ id: 'lnk1', url: 'https://example.com/spec', label: 'Spec' }],
         createdAt: '2026-06-01T09:00:00',
@@ -174,20 +174,22 @@ test('an older-schema file migrates on import and reports what changed', async (
       questions: window.cairn.store.state.questions.map((q) => [q.id, q.bank]),
       stageForced: window.cairn.store.state.threads[0].stages[0].forceCompleted,
       version: window.cairn.store.state.schemaVersion,
-      collections: ['exercises', 'gymSessions', 'painRecords', 'greDays', 'greEntries'].filter(
+      collections: ['exercises', 'gymSessions', 'painRecords', 'reading'].filter(
         (key) => Array.isArray(window.cairn.store.state[key]),
       ),
       habitsGone: window.cairn.store.state.habits === undefined,
+      notesGone: window.cairn.store.state.notes === undefined,
     };
   }, v1);
 
   expect(report.ok).toBe(true);
   // A v1 file runs the whole chain, not just the first step.
-  expect(report.version).toBe(7);
+  expect(report.version).toBe(8);
   expect(report.questions).toEqual([['q1', 'sql']]);
   expect(report.stageForced).toBe(true);
   expect(report.notes.join(' ')).toContain('migrated from schema v1');
-  expect(report.collections).toEqual(['exercises', 'gymSessions', 'painRecords', 'greDays', 'greEntries']);
+  expect(report.collections).toEqual(['exercises', 'gymSessions', 'painRecords', 'reading']);
+  expect(report.notesGone).toBe(true);
   expect(report.habitsGone).toBe(true);
 });
 
@@ -242,7 +244,7 @@ test('a full storage quota warns instead of losing the change', async ({ page })
       throw error;
     };
     const result = store.mutate('big change', (state) => {
-      state.threads.push({ id: 'huge', name: 'Too big', type: 'project', stages: [], links: [], notes: '', archived: false });
+      state.threads.push({ id: 'huge', name: 'Too big', type: 'project', stages: [], links: [], notes: '', status: 'active' });
     });
     window.cairn.render();
     store.storage.setItem = original;
@@ -264,7 +266,7 @@ test('a second tab writing is detected rather than silently clobbered', async ({
     const theirs = JSON.parse(store.storage.getItem(store.key));
     theirs.meta.writeSeq = (theirs.meta.writeSeq ?? 0) + 5;
     theirs.meta.writerId = 'some-other-tab';
-    theirs.threads.push({ id: 'from_b', name: 'From the other tab', type: 'project', stages: [], links: [], notes: '', archived: false });
+    theirs.threads.push({ id: 'from_b', name: 'From the other tab', type: 'project', stages: [], links: [], notes: '', status: 'active' });
     store.storage.setItem(store.key, JSON.stringify(theirs));
 
     const result = store.save();

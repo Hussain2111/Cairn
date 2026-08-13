@@ -15,7 +15,7 @@ test('every view renders without a console error', async ({ page }) => {
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Today', level: 1 })).toBeVisible();
 
-  for (const route of ['#/threads', '#/questions', '#/notes', '#/pipelines', '#/time', '#/weekly', '#/gym', '#/gym/library', '#/gym/pain', '#/gym/history', '#/gre', '#/gre/log', '#/gre/retrieval', '#/gre/audit', '#/gre/schedule', '#/reading', '#/search', '#/settings']) {
+  for (const route of ['#/threads', '#/threads?filter=done', '#/questions', '#/questions/sql', '#/questions/gre', '#/questions/review', '#/pipelines', '#/time', '#/weekly', '#/gym', '#/gym/library', '#/gym/pain', '#/gym/history', '#/reading', '#/settings']) {
     await page.goto(`/${route}`);
     await expect(page.locator('h1.page-title')).toBeVisible();
   }
@@ -37,34 +37,33 @@ test('theme choice persists across a reload', async ({ page }) => {
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 });
 
-test('the sidebar foot reads as one list', async ({ page }) => {
+test('the sidebar foot is Settings alone, and there is no search or shortcuts anywhere', async ({ page }) => {
   await page.goto('/');
   const foot = page.locator('.sidebar__foot');
-  // Search, Settings and Shortcuts are the same component, so they align.
-  await expect(foot.locator('.nav__link')).toHaveCount(3);
-  await expect(foot).toContainText('Search');
+  await expect(foot.locator('.nav__link')).toHaveCount(1);
   await expect(foot).toContainText('Settings');
-  await expect(foot).toContainText('Shortcuts');
 
-  // Same layout, same box, same starting edge — a button no longer centres
-  // its label while the link beside it starts at the left.
-  const boxes = await foot.locator('.nav__link').evaluateAll((nodes) =>
-    nodes.map((node) => {
-      const style = getComputedStyle(node);
-      return [
-        style.display,
-        style.justifyContent,
-        style.textAlign,
-        style.paddingLeft,
-        Math.round(node.getBoundingClientRect().left),
-        Math.round(node.getBoundingClientRect().width),
-      ].join('|');
-    }));
-  expect(new Set(boxes).size).toBe(1);
+  const sidebar = page.locator('#sidebar');
+  await expect(sidebar).not.toContainText('Search');
+  await expect(sidebar).not.toContainText('Shortcuts');
+  await expect(sidebar).not.toContainText('Notes');
+  await expect(sidebar).not.toContainText('GRE');
 
-  // And the focus ring still lands on them.
-  await foot.getByRole('button', { name: 'Search' }).focus();
-  const outline = await foot.getByRole('button', { name: 'Search' })
-    .evaluate((node) => getComputedStyle(node).outlineWidth);
-  expect(outline).not.toBe('0px');
+  // The keys those features answered to do nothing now.
+  await page.keyboard.press('?');
+  await expect(page.locator('dialog')).toHaveCount(0);
+  await page.keyboard.press('/');
+  await expect(page).toHaveURL(/#\/today|#\/$|\/$/);
+});
+
+test('undo still works from the keyboard, since it is the only way to reverse a delete', async ({ page }) => {
+  await page.goto('/#/threads');
+  await page.getByRole('button', { name: 'New thread' }).click();
+  await page.locator('dialog').getByLabel('Name').fill('Undo me');
+  await page.locator('dialog').getByRole('button', { name: 'Create' }).click();
+  await expect(page.getByRole('heading', { name: 'Undo me', level: 1 })).toBeVisible();
+
+  await page.keyboard.press('ControlOrMeta+z');
+  await page.goto('/#/threads');
+  await expect(page.locator('#view')).not.toContainText('Undo me');
 });

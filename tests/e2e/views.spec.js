@@ -1,62 +1,13 @@
 import { test, expect } from '@playwright/test';
 
-// The remaining surfaces: notes and templates, pipelines, time blocking, the
-// weekly review, search, stall detection and the narrow-screen layout.
+// The remaining surfaces: pipelines and the spreadsheet importer, time
+// blocking, the weekly review, reading and the narrow-screen layout.
 
 function iso(offsetDays = 0) {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
-
-test('a note can be created from a template and renders as markdown', async ({ page }) => {
-  await page.goto('/#/notes');
-  await page.getByRole('button', { name: 'New note' }).click();
-  const dialog = page.locator('dialog');
-  await dialog.getByLabel('Title').fill('Day one');
-  await dialog.getByLabel('Template').selectOption({ label: 'Daily project log' });
-  await dialog.getByRole('button', { name: 'Create' }).click();
-
-  const body = page.locator('.textarea--tall');
-  await expect(body).toHaveValue(/## What I did/);
-  await expect(body).toHaveValue(new RegExp(`Daily log — ${iso()}`));
-
-  await body.fill('# Heading\n\n- one\n- two\n\n**bold** and `code`');
-  await page.getByRole('button', { name: 'Preview' }).click();
-  await expect(page.locator('.markdown h1')).toHaveText('Heading');
-  await expect(page.locator('.markdown li')).toHaveCount(2);
-  await expect(page.locator('.markdown strong')).toHaveText('bold');
-});
-
-test('note bodies cannot inject markup', async ({ page }) => {
-  await page.goto('/#/notes');
-  await page.getByRole('button', { name: 'New note' }).click();
-  const dialog = page.locator('dialog');
-  await dialog.getByLabel('Title').fill('Escaping');
-  await dialog.getByRole('button', { name: 'Create' }).click();
-
-  await page.locator('.textarea--tall').fill('<img src=x onerror="window.__pwned=true">');
-  await page.getByRole('button', { name: 'Preview' }).click();
-  await expect(page.locator('.markdown')).toContainText('<img src=x');
-  expect(await page.evaluate(() => window.__pwned)).toBeUndefined();
-});
-
-test('a note can be attached to a thread and filtered to it', async ({ page }) => {
-  await page.goto('/#/threads');
-  await page.getByRole('button', { name: 'New thread' }).click();
-  let dialog = page.locator('dialog');
-  await dialog.getByLabel('Name').fill('Compiler');
-  await dialog.getByRole('button', { name: 'Create' }).click();
-
-  // The thread page's own Notes button, pre-filtered to this thread.
-  await page.locator('#view').getByRole('link', { name: 'Notes' }).click();
-  await page.getByRole('button', { name: 'New note' }).click();
-  dialog = page.locator('dialog');
-  await dialog.getByLabel('Title').fill('Attached note');
-  await dialog.getByRole('button', { name: 'Create' }).click();
-
-  await expect(page.locator('.note-item__meta').first()).toContainText('Compiler');
-});
 
 test('an application that has gone quiet shows up in needs action', async ({ page }) => {
   await page.goto('/#/pipelines');
@@ -134,7 +85,7 @@ test('a plan can be logged as done in one click', async ({ page }) => {
   await expect(page.getByRole('button', { name: /Log the .* block as done/ })).toHaveCount(0);
 });
 
-test('a block can be assigned to the gym or the GRE, not only to a thread', async ({ page }) => {
+test('a block can be assigned to the gym or to practice, not only to a thread', async ({ page }) => {
   await page.goto('/#/time');
   await page.getByRole('button', { name: 'Log a block' }).click();
   const dialog = page.locator('dialog');
@@ -184,67 +135,6 @@ test('a block that ends before it starts is refused', async ({ page }) => {
   await expect(page.getByText('A block has to end after it starts.')).toBeVisible();
 });
 
-test('a stalled thread is surfaced on Today and in its own filter', async ({ page }) => {
-  await page.goto('/');
-  await page.evaluate(() => {
-    window.cairn.store.mutate('seed stalled', (state) => {
-      state.threads.push({
-        id: 'thr_stalled', name: 'Abandoned project', type: 'project', archived: false, notes: '', links: [],
-        description: '', createdAt: '2026-01-01T09:00:00',
-        stages: [{
-          id: 's1', title: 'Stage', doneWhen: 'x', forceUnlocked: false, forceCompleted: false, forceCompletedAt: null,
-          notes: '', links: [], createdAt: '2026-01-01T09:00:00',
-          steps: [{ id: 'p1', title: 'Step', notes: '', links: [], createdAt: '2026-01-01T09:00:00', tasks: [
-            { id: 'k1', title: 'Never done', done: false, doneAt: null, due: null, estimateMinutes: null, notes: '', links: [], createdAt: '2026-01-01T09:00:00' },
-          ] }],
-        }],
-      });
-    });
-    window.cairn.render();
-  });
-
-  await page.goto('/#/today');
-  await expect(page.getByText('has not moved')).toBeVisible();
-  await expect(page.locator('.banner')).toContainText('Abandoned project');
-
-  await page.getByRole('link', { name: 'Look at them' }).click();
-  const card = page.locator('.card', { hasText: 'Abandoned project' });
-  await expect(card).toBeVisible();
-  await expect(card.locator('.tag--danger')).toContainText('stalled');
-});
-
-test('search finds tasks, questions and what was hesitated on', async ({ page }) => {
-  await page.goto('/');
-  await page.evaluate(() => {
-    window.cairn.store.mutate('seed search', (state) => {
-      state.threads.push({
-        id: 't1', name: 'Compiler', type: 'project', archived: false, notes: '', links: [], description: '',
-        createdAt: '2026-06-01T09:00:00',
-        stages: [{ id: 's1', title: 'Lexer', doneWhen: 'x', forceUnlocked: false, forceCompleted: false, forceCompletedAt: null, notes: '', links: [], createdAt: '2026-06-01T09:00:00',
-          steps: [{ id: 'p1', title: 'Numbers', notes: '', links: [], createdAt: '2026-06-01T09:00:00', tasks: [
-            { id: 'k1', title: 'Integer literals', done: false, doneAt: null, due: null, estimateMinutes: null, notes: '', links: [], createdAt: '2026-06-01T09:00:00' },
-          ] }] }],
-      });
-      state.questions.push({
-        id: 'q1', bank: 'sql', title: 'Window functions', url: '', tags: [], difficulty: 'hard', fields: {}, notes: '',
-        intervalIndex: 0, dueDate: '2026-08-07', retired: false, retiredAt: null, createdAt: '2026-08-01',
-        attempts: [{ id: 'a1', date: '2026-08-01', unaided: false, minutes: 20, hesitation: 'partition versus order by' }],
-      });
-    });
-  });
-
-  await page.goto('/#/search?q=integer');
-  await expect(page.locator('.result').first()).toContainText('Integer literals');
-
-  await page.goto('/#/search?q=partition');
-  await expect(page.locator('.result')).toHaveCount(1);
-  await expect(page.locator('.result')).toContainText('Window functions');
-
-  // Clicking a result jumps to it.
-  await page.locator('.result').first().click();
-  await expect(page).toHaveURL(/#\/questions\/sql/);
-});
-
 test('the weekly review is generated and exports as markdown', async ({ page }) => {
   await page.goto('/');
   await page.evaluate(() => {
@@ -289,17 +179,4 @@ test('on a narrow screen the tree collapses to an outline and the menu is reacha
   await expect(page.locator('#sidebar')).not.toBeInViewport();
   await page.getByRole('button', { name: '☰ Menu' }).click();
   await expect(page.locator('#sidebar')).toBeInViewport();
-});
-
-test('keyboard shortcuts move between the main views', async ({ page }) => {
-  await page.goto('/');
-  await page.keyboard.press('r');
-  await expect(page).toHaveURL(/#\/threads/);
-  await page.keyboard.press('q');
-  await expect(page).toHaveURL(/#\/questions/);
-  await page.keyboard.press('t');
-  await expect(page).toHaveURL(/#\/today/);
-  await page.keyboard.press('/');
-  await expect(page).toHaveURL(/#\/search/);
-  await expect(page.locator('input[type="search"]')).toBeFocused();
 });
