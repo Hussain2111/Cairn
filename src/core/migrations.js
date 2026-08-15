@@ -657,6 +657,197 @@ function firstLine(value) {
   return line.length > 120 ? `${line.slice(0, 117)}…` : line;
 }
 
+/**
+ * Which specific muscle an exercise trains, read from its name.
+ *
+ * Deliberately a lookup of unambiguous cases rather than anything clever. A
+ * name that is not on this list keeps its broad group and gets no specific
+ * muscle, because "row" could be lats or rhomboids depending on the angle and
+ * picking one silently would put an exercise on the wrong body-diagram region
+ * for good. The library surfaces the unclassified ones so they can be set by
+ * the only person who knows.
+ */
+const V9_TAXONOMY = {
+  chest: ['upper chest', 'mid chest', 'lower chest'],
+  back: ['lats', 'traps', 'rhomboids', 'lower back'],
+  shoulders: ['front delts', 'side delts', 'rear delts'],
+  arms: ['biceps', 'triceps', 'forearms'],
+  legs: ['quads', 'hamstrings', 'glutes', 'calves', 'adductors'],
+  core: ['abs', 'obliques'],
+};
+const V9_GROUPS = Object.keys(V9_TAXONOMY);
+const V9_GROUP_FOR = Object.fromEntries(
+  Object.entries(V9_TAXONOMY).flatMap(([group, muscles]) => muscles.map((m) => [m, group])),
+);
+const V9_STARTER_WARMUPS = [
+  'Treadmill', 'Leg swings', 'Arm circles', 'Cat-cow', 'Bodyweight squats',
+  'Walking lunges', 'Hip circles', 'Band pull-aparts', 'Wall angels', 'Scap rows',
+];
+
+const MUSCLE_BY_NAME = [
+  [/incline.*(press|fly)|upper chest/i, 'upper chest'],
+  [/decline.*(press|fly)|\bdip\b|lower chest/i, 'lower chest'],
+  [/bench press|chest press|push-?up|pec deck|cable fly|chest fly/i, 'mid chest'],
+  [/pull-?up|chin-?up|pulldown|pullover|straight-?arm/i, 'lats'],
+  [/shrug|upright row/i, 'traps'],
+  [/face pull|rear delt|reverse fly|reverse pec/i, 'rear delts'],
+  [/rhomboid|scap(ula)? retract/i, 'rhomboids'],
+  [/back extension|hyperextension|good morning|lower back/i, 'lower back'],
+  [/lateral raise|side raise|side delt/i, 'side delts'],
+  [/overhead press|shoulder press|military press|front raise|arnold/i, 'front delts'],
+  [/curl(?!.*leg)|chin curl|biceps/i, 'biceps'],
+  [/triceps|pushdown|skull ?crusher|kickback|close-?grip bench/i, 'triceps'],
+  [/wrist|grip|farmer|forearm/i, 'forearms'],
+  [/squat|leg press|leg extension|lunge|step-?up|hack squat/i, 'quads'],
+  [/leg curl|romanian|rdl|hamstring|nordic|deadlift/i, 'hamstrings'],
+  [/hip thrust|glute bridge|glute|kickback.*glute/i, 'glutes'],
+  [/calf|calve|soleus/i, 'calves'],
+  [/adductor|copenhagen|inner thigh/i, 'adductors'],
+  [/oblique|woodchop|russian twist|side bend|side plank/i, 'obliques'],
+  [/plank|crunch|sit-?up|leg raise|ab wheel|hollow|dead ?bug|\babs\b/i, 'abs'],
+];
+
+/**
+ * Movements that are warm-ups, not exercises.
+ *
+ * These were filed under a muscle group because the library had nowhere else
+ * to put them, which made that group a mix of things to train and things to do
+ * before training. They move to the warm-up library; anything matching neither
+ * this list nor a muscle is neither, and is removed.
+ */
+const WARMUP_BY_NAME =
+  /cat-?cow|leg swing|arm circle|hip circle|band pull-?apart|wall angel|scap ?(row|pull)|treadmill|elliptical|rowing machine|cycle|bike|jump rope|skipping|dynamic stretch|foam roll|mobility|activation|world'?s greatest|thoracic|90\/90|bird ?dog|glute bridge warm|walking lunge|bodyweight squat|jumping jack|high knee|butt kick|shoulder dislocate/i;
+
+function specificMuscle(name) {
+  for (const [pattern, muscle] of MUSCLE_BY_NAME) {
+    if (pattern.test(String(name ?? ''))) return muscle;
+  }
+  return null;
+}
+
+/**
+ * v8 → v9 — the gym gets specific about what it trains.
+ *
+ *   - "Back" was too coarse to decide anything with. An exercise now carries a
+ *     broad group *and* the specific muscle underneath it, and the body diagram
+ *     maps to the specific level.
+ *   - Warm-up movements become their own library. They were sitting under
+ *     muscle groups — cat-cow filed under "core" — which is why the core group
+ *     was unusable as a list of things to train.
+ *   - Session times lose their seconds. They were never entered and never
+ *     meant anything; a stored "18:05:00" only makes the picker offer a
+ *     seconds field.
+ *
+ * Nothing is guessed. An exercise whose specific muscle cannot be read off its
+ * name keeps its group, gets a null muscle, and is reported by name so it can
+ * be corrected — the same treatment a half-parsed import gets.
+ */
+function v8_to_v9(input) {
+  const state = deepClone(input);
+  const notes = [];
+
+  if (!Array.isArray(state.warmups)) state.warmups = [];
+
+  // An exercise still named by a session or a pain record is never deleted:
+  // the sets are the record, and removing the name would turn logged work into
+  // "Removed exercise" rows.
+  const referenced = new Set();
+  for (const session of state.gymSessions ?? []) {
+    for (const entry of session.exercises ?? []) referenced.add(entry.exerciseId);
+  }
+  for (const record of state.painRecords ?? []) {
+    if (record.exerciseId) referenced.add(record.exerciseId);
+  }
+
+  const movedToWarmup = [];
+  const alsoKept = [];
+  const unclassified = [];
+  const keep = [];
+  let droppedSecondaries = 0;
+
+  for (const exercise of state.exercises ?? []) {
+    if (!exercise || typeof exercise !== 'object') continue;
+    const name = String(exercise.name ?? '');
+    const muscle = specificMuscle(name);
+    const isDrill = WARMUP_BY_NAME.test(name) && !muscle;
+
+    if (isDrill) {
+      movedToWarmup.push(name);
+      state.warmups.push({ id: uid('wu'), name, createdAt: exercise.createdAt ?? null });
+      if (!referenced.has(exercise.id)) continue;
+      alsoKept.push(name);
+    }
+
+    // The old `muscle` field held a broad group. It becomes `group`; the
+    // specific muscle is read from the name, or left null rather than guessed.
+    const oldGroup = V9_GROUPS.includes(exercise.muscle) ? exercise.muscle : null;
+    exercise.muscle = muscle;
+    exercise.group = muscle ? V9_GROUP_FOR[muscle] : (oldGroup ?? 'chest');
+    if (!muscle) unclassified.push(name);
+
+    // Secondaries were broad groups too, and a group is not a muscle.
+    // "shoulders" could be any of three delts and "arms" either head of the
+    // arm; promoting one at random would put the exercise on the wrong body
+    // region. The unusable ones are dropped and counted rather than guessed.
+    const before = (Array.isArray(exercise.secondary) ? exercise.secondary : []);
+    exercise.secondary = before.filter((m) => V9_GROUP_FOR[m]);
+    droppedSecondaries += before.length - exercise.secondary.length;
+
+    keep.push(exercise);
+  }
+  state.exercises = keep;
+
+  if (movedToWarmup.length) {
+    notes.push(
+      `moved ${movedToWarmup.length} mobility movement(s) out of the muscle groups into the new warm-up library: ${movedToWarmup.join(', ')}`,
+    );
+  }
+  if (alsoKept.length) {
+    notes.push(
+      `kept ${alsoKept.join(', ')} in the exercise library as well, because a logged session references it`,
+    );
+  }
+  if (droppedSecondaries) {
+    notes.push(
+      `cleared ${droppedSecondaries} secondary muscle(s) that were broad groups — "shoulders" and "arms" name three muscles each, ` +
+        'and picking one would have been a guess. Re-add the ones that matter in Gym › Library.',
+    );
+  }
+  if (unclassified.length) {
+    notes.push(
+      `left ${unclassified.length} exercise(s) at the broad group because the specific muscle could not be read from the name without guessing. ` +
+        `Set it, or delete the entry if it is not an exercise, in Gym › Library: ${unclassified.join(', ')}`,
+    );
+  }
+
+  if (!state.warmups.length && ((state.exercises ?? []).length || (state.gymSessions ?? []).length)) {
+    for (const name of V9_STARTER_WARMUPS) state.warmups.push({ id: uid('wu'), name, createdAt: null });
+    notes.push(`seeded the warm-up library with ${V9_STARTER_WARMUPS.length} of the usual movements`);
+  }
+
+  // --- sessions -------------------------------------------------------------
+  let trimmed = 0;
+  for (const session of state.gymSessions ?? []) {
+    if (!session || typeof session !== 'object') continue;
+    for (const key of ['startTime', 'endTime']) {
+      const value = session[key];
+      if (typeof value === 'string' && /^\d{1,2}:\d{2}:/.test(value)) {
+        session[key] = value.slice(0, 5);
+        trimmed += 1;
+      }
+    }
+    if (!session.warmup || typeof session.warmup !== 'object') {
+      session.warmup = { movementIds: [], minutes: null };
+    }
+  }
+  if (trimmed) {
+    notes.push(`dropped the seconds from ${trimmed} session time(s) — they were never entered and never meant anything`);
+  }
+
+  state.schemaVersion = 9;
+  return { state, notes };
+}
+
 export const MIGRATIONS = {
   1: v1_to_v2,
   2: v2_to_v3,
@@ -665,6 +856,7 @@ export const MIGRATIONS = {
   5: v5_to_v6,
   6: v6_to_v7,
   7: v7_to_v8,
+  8: v8_to_v9,
 };
 
 export const OLDEST_SUPPORTED_VERSION = 1;

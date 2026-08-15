@@ -1,10 +1,9 @@
 // The gym.
 //
-// Four pages, one per thing the tab is for: how the week is going and whether a
-// lift is moving, the library it draws from, pain grouped by where it hurt, and
-// the log itself.
+// Four pages, one per thing the tab is for: how the week is going, the library
+// it draws from, pain grouped by where it hurt, and the log itself.
 
-import { el, tag, empty, confirm, meter, select, toast, downloadFile, copyText } from '../ui.js';
+import { el, tag, empty, confirm, meter, select, toast, downloadFile, copyText, openDialog, input } from '../ui.js';
 import { pageHead, statTile, editRecord } from './shared.js';
 import {
   allExercises,
@@ -13,14 +12,18 @@ import {
   exerciseName,
   exerciseUsage,
   exerciseNameTaken,
+  unclassifiedExercises,
+  warmups,
+  warmupNameTaken,
+  seedWarmups,
   weekProgress,
   sessions,
   sessionsInWeek,
   sessionTotals,
   sessionMuscles,
   sessionMinutes,
-  exerciseProgression,
-  trainedExerciseIds,
+  warmupMovements,
+  warmupMinutes,
   weekDaySessions,
   painByLocation,
   painRecords,
@@ -28,7 +31,16 @@ import {
   painTableMarkdown,
   seedLibrary,
 } from '../../core/gym.js';
-import { makeExercise, makePainRecord, MUSCLE_GROUPS, EXERCISE_STATUSES, PAIN_TIMING } from '../../core/schema.js';
+import {
+  makeExercise,
+  makeWarmup,
+  makePainRecord,
+  MUSCLE_GROUPS,
+  EXERCISE_STATUSES,
+  PAIN_TIMING,
+  muscleGroup,
+} from '../../core/schema.js';
+import { musclePicker } from './body-diagram.js';
 import { formatDate, formatDuration, relativeDay, weekdayInitials, todayISO } from '../../core/dates.js';
 import { openSessionDialog } from './gym-session.js';
 
@@ -117,8 +129,6 @@ function renderOverview(ctx) {
       progress.target ? meter(progress.done / progress.target, progress.met ? 'complete' : '') : null,
       weekStrip(ctx),
     ]),
-
-    section('Progression', 'one exercise over time', [progressionPanel(ctx)]),
   ]);
 }
 
@@ -133,74 +143,12 @@ function weekStrip(ctx) {
     ])));
 }
 
-function progressionPanel(ctx) {
-  const options = trainedExerciseIds(ctx.state)
-    .map((id) => ({ id, name: exerciseName(ctx.state, id) }))
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  const host = el('div.stack');
-  if (!options.length) {
-    host.appendChild(el('p.field__hint', { text: 'Log a couple of sessions and this shows whether anything is actually moving.' }));
-    return host;
-  }
-
-  const chart = el('div.stack');
-  const picker = select(options.map((o) => ({ value: o.id, label: o.name })), options[0].id, {
-    'aria-label': 'Exercise to chart',
-  });
-
-  const drawChart = () => {
-    chart.replaceChildren();
-    const points = exerciseProgression(ctx.state, picker.value);
-    if (!points.length) return;
-
-    // A bodyweight movement has no load to plot, so its progression is reps.
-    const bodyweight = points.every((point) => point.bodyweight);
-    const value = (point) => (bodyweight ? point.topReps : point.topWeight);
-    const peak = Math.max(...points.map(value), 1);
-    const delta = value(points[points.length - 1]) - value(points[0]);
-    const last = points[points.length - 1];
-    const unit = bodyweight ? 'reps' : 'kg';
-
-    chart.appendChild(
-      el('div.row', [
-        tag(`${points.length} session${points.length === 1 ? '' : 's'}`),
-        bodyweight ? tag('bodyweight — tracked by reps', 'teal') : null,
-        tag(`best ${value(last)} ${unit}${bodyweight ? '' : ` × ${last.topReps}`}`, 'teal'),
-        points.length > 1
-          ? tag(
-              delta > 0 ? `up ${Math.round(delta * 10) / 10} ${unit}` : delta < 0 ? `down ${Math.round(-delta * 10) / 10} ${unit}` : 'no change',
-              delta > 0 ? 'teal' : delta < 0 ? 'amber' : '',
-            )
-          : null,
-      ]),
-    );
-    if (points.length < 2) {
-      chart.appendChild(el('p.field__hint', { text: 'One session so far. Two makes a direction.' }));
-    }
-
-    chart.appendChild(
-      el('div.progression', points.slice(-24).map((point) =>
-        el('div.progression__col', {
-          title: `${formatDate(point.date)}: top set ${point.topReps} × ${point.bodyweight ? 'bodyweight' : point.topWeight} · ${point.sets} sets · ${point.reps} reps`,
-        }, [
-          el('div.progression__bar', { style: { height: `${Math.max(4, (value(point) / peak) * 100)}%` } }),
-          el('div.progression__label.mono.faint', { text: formatDate(point.date) }),
-        ]))),
-    );
-  };
-
-  picker.addEventListener('change', drawChart);
-  drawChart();
-  host.append(el('div.row', [picker]), chart);
-  return host;
-}
-
 // --- library ----------------------------------------------------------------
 
 function renderLibrary(ctx) {
   const active = activeExercises(ctx.state);
   const dropped = droppedExercises(ctx.state);
+  const unclassified = unclassifiedExercises(ctx.state);
 
   return el('div.stack', [
     el('div.row', [
@@ -217,9 +165,110 @@ function renderLibrary(ctx) {
           }),
     ]),
 
+    // Exercises the migration would not guess a muscle for. Surfaced at the
+    // top rather than left to be discovered: an exercise with no specific
+    // muscle is missing from the body diagram entirely.
+    unclassified.length
+      ? el('div.banner.banner--warn', [
+          el('div.banner__body', [
+            el('div.banner__title', {
+              text: `${unclassified.length} exercise${unclassified.length === 1 ? '' : 's'} without a specific muscle`,
+            }),
+            el('div.banner__text', {
+              text: `${unclassified.map((e) => e.name).join(', ')} — each kept its broad group because the specific muscle could not be worked out without guessing. Set it, or delete the entry if it is not an exercise.`,
+            }),
+          ]),
+        ])
+      : null,
+
     libraryGroup(ctx, 'Active', active, 'What a session picks from.'),
     libraryGroup(ctx, 'Dropped', dropped, 'Out of the picker, still in every session that used them.'),
+
+    warmupSection(ctx),
   ]);
+}
+
+/**
+ * The warm-up library.
+ *
+ * Its own list, because a warm-up movement is not an exercise: no sets, no
+ * load, no muscle. They used to sit under muscle groups, which is what made
+ * the core group a mix of things to train and things to do first.
+ */
+function warmupSection(ctx) {
+  const list = warmups(ctx.state);
+  return section('Warm-up movements', `${list.length}`, [
+    el('p.field__hint', {
+      text: 'Mobility and activation drills. A session picks from these separately from its exercises.',
+    }),
+    el('div.row', [
+      el('button.btn.btn--sm', { type: 'button', text: 'Add a movement', onclick: () => editWarmup(ctx, null) }),
+      list.length
+        ? null
+        : el('button.btn.btn--sm', {
+            type: 'button',
+            text: 'Add the usual ones',
+            onclick: () => {
+              const added = ctx.commit('seed warm-ups', (state) => seedWarmups(state));
+              toast(`${added} warm-up movements added.`);
+            },
+          }),
+    ]),
+    list.length
+      ? el('div.warmup-picker', list.map((movement) =>
+          el('button.muscle-chip', {
+            type: 'button',
+            text: movement.name,
+            'aria-label': `Edit ${movement.name}`,
+            onclick: () => editWarmup(ctx, movement),
+          })))
+      : el('p.muted', { text: 'Nothing here yet.' }),
+  ]);
+}
+
+async function editWarmup(ctx, movement) {
+  const isNew = !movement;
+  const values = await editRecord({
+    title: isNew ? 'Add a warm-up movement' : 'Warm-up movement',
+    submitLabel: isNew ? 'Add' : 'Save',
+    deletable: !isNew,
+    fields: [{ key: 'name', label: 'Name', required: true, placeholder: 'e.g. Ankle rocks' }],
+    values: movement ?? {},
+  });
+  if (!values) return;
+
+  if (values.__delete) {
+    const used = (ctx.state.gymSessions ?? []).filter((s) => (s.warmup?.movementIds ?? []).includes(movement.id)).length;
+    const answer = await confirm({
+      title: 'Remove this movement?',
+      message: used
+        ? `"${movement.name}" is on ${used} logged session(s). Removing it takes it off those sessions too. This can be undone.`
+        : `"${movement.name}" will be removed. This can be undone.`,
+      confirmLabel: 'Remove',
+    });
+    if (answer !== 'confirm') return;
+    ctx.commit('remove warm-up movement', (state) => {
+      const index = state.warmups.findIndex((w) => w.id === movement.id);
+      if (index >= 0) state.warmups.splice(index, 1);
+      for (const session of state.gymSessions) {
+        if (!session.warmup) continue;
+        session.warmup.movementIds = (session.warmup.movementIds ?? []).filter((id) => id !== movement.id);
+      }
+    });
+    return;
+  }
+
+  if (warmupNameTaken(ctx.state, values.name, movement?.id)) {
+    toast(`There is already a movement called "${values.name}".`, { variant: 'danger' });
+    return;
+  }
+  if (isNew) {
+    ctx.commit('add warm-up movement', (state) => {
+      state.warmups.push(makeWarmup({ name: values.name }));
+    }, { undoable: false });
+    return;
+  }
+  ctx.commit('edit warm-up movement', () => { movement.name = values.name; }, { undoable: false });
 }
 
 function libraryGroup(ctx, heading, list, hint) {
@@ -233,10 +282,13 @@ function libraryGroup(ctx, heading, list, hint) {
 
 function exerciseRow(ctx, exercise) {
   const usage = exerciseUsage(ctx.state, exercise.id);
-  return el('div.row.row--between.exercise-row', { dataset: { status: exercise.status } }, [
+  return el('div.row.row--between.exercise-row', {
+    dataset: { status: exercise.status, unclassified: String(!exercise.muscle) },
+  }, [
     el('div.row', [
       el('strong.break', { text: exercise.name }),
-      tag(exercise.muscle, 'teal'),
+      tag(exercise.group),
+      exercise.muscle ? tag(exercise.muscle, 'teal') : tag('no muscle set', 'amber'),
       ...(exercise.secondary ?? []).map((m) => tag(m)),
       el('span.section__meta', {
         text: usage.sessions ? `${usage.sets} sets across ${usage.sessions} session(s)` : 'never used',
@@ -263,26 +315,119 @@ function exerciseRow(ctx, exercise) {
 
 async function editExercise(ctx, exercise) {
   const isNew = !exercise;
-  const values = await editRecord({
-    title: isNew ? 'Add an exercise' : 'Exercise',
-    submitLabel: isNew ? 'Add' : 'Save',
-    deletable: !isNew,
-    fields: [
-      { key: 'name', label: 'Name', required: true, placeholder: 'e.g. Seated cable row' },
-      { key: 'muscle', label: 'Primary muscle', type: 'select', options: MUSCLE_GROUPS, default: 'chest' },
-      {
-        key: 'secondary',
-        label: 'Secondary muscles',
-        placeholder: 'e.g. arms, core',
-        hint: 'Comma-separated. Optional.',
-      },
-      { key: 'status', label: 'Status', type: 'select', options: EXERCISE_STATUSES, default: 'active' },
-    ],
-    values: exercise ? { ...exercise, secondary: (exercise.secondary ?? []).join(', ') } : {},
-  });
-  if (!values) return;
+  const draft = {
+    muscle: exercise?.muscle ?? null,
+    group: exercise?.group ?? 'chest',
+    secondary: [...(exercise?.secondary ?? [])],
+  };
 
-  if (values.__delete) {
+  const nameInput = el('input.input', { value: exercise?.name ?? '', placeholder: 'e.g. Seated cable row', 'aria-label': 'Name' });
+  const statusSelect = select(EXERCISE_STATUSES.map((v) => ({ value: v, label: v })), exercise?.status ?? 'active', {
+    'aria-label': 'Status',
+  });
+  const chosen = el('div.row');
+  const errorNode = el('div.field__error');
+
+  const drawChosen = () => {
+    chosen.replaceChildren(
+      draft.muscle
+        ? tag(`${muscleGroup(draft.muscle)} › ${draft.muscle}`, 'teal')
+        : tag(`${draft.group} — no specific muscle set`, 'amber'),
+    );
+  };
+
+  // The diagram and the list are two views of one selection, so the editor
+  // holds the value and both of them render it.
+  const groupSelect = select(MUSCLE_GROUPS.map((g) => ({ value: g, label: g })), draft.group, {
+    'aria-label': 'Broad group',
+  });
+
+  const picker = musclePicker({
+    selected: draft.muscle,
+    onChange: (muscle) => {
+      draft.muscle = muscle;
+      // The group is derived from the muscle, so the select follows rather
+      // than being a second thing to keep in step by hand.
+      if (muscle) {
+        draft.group = muscleGroup(muscle);
+        groupSelect.value = draft.group;
+      }
+      drawChosen();
+    },
+  });
+  drawChosen();
+  groupSelect.addEventListener('change', () => {
+    draft.group = groupSelect.value;
+    // Choosing a group by hand clears a specific muscle that contradicts it.
+    if (draft.muscle && muscleGroup(draft.muscle) !== draft.group) {
+      draft.muscle = null;
+      picker.select?.(null);
+    }
+    drawChosen();
+  });
+
+  const secondaryInput = el('input.input', {
+    value: draft.secondary.join(', '),
+    placeholder: 'e.g. triceps, front delts',
+    'aria-label': 'Secondary muscles',
+  });
+
+  const result = await openDialog({
+    title: isNew ? 'Add an exercise' : 'Exercise',
+    wide: true,
+    body: el('div.stack', [
+      el('label.field', [el('span.field__label', { text: 'Name' }), nameInput]),
+      el('div.stack--tight.stack', [
+        el('span.field__label', { text: 'What it trains' }),
+        chosen,
+        picker,
+        el('span.field__hint', {
+          text: 'Pick the specific muscle on the figure or in the list — they are the same selection. Leave it unset if you are not sure; the library will keep asking.',
+        }),
+      ]),
+      el('div.field-row', [
+        el('label.field', [
+          el('span.field__label', { text: 'Broad group' }),
+          groupSelect,
+          el('span.field__hint', { text: 'Set automatically by the muscle above.' }),
+        ]),
+        el('label.field', [el('span.field__label', { text: 'Status' }), statusSelect]),
+      ]),
+      el('label.field', [
+        el('span.field__label', { text: 'Secondary muscles' }),
+        secondaryInput,
+        el('span.field__hint', { text: 'Comma-separated, specific muscles. Optional.' }),
+      ]),
+      errorNode,
+    ]),
+    footer: (close) => [
+      isNew ? null : el('button.btn.btn--danger', { type: 'button', text: 'Delete', onclick: () => close({ __delete: true }) }),
+      el('div.spacer'),
+      el('button.btn', { type: 'button', text: 'Cancel', onclick: () => close(null) }),
+      el('button.btn.btn--primary', {
+        type: 'button',
+        text: isNew ? 'Add' : 'Save',
+        onclick: () => {
+          const name = nameInput.value.trim();
+          if (!name) {
+            errorNode.textContent = 'It needs a name.';
+            nameInput.focus();
+            return;
+          }
+          close({
+            name,
+            status: statusSelect.value,
+            group: draft.group,
+            muscle: draft.muscle,
+            secondary: secondaryInput.value,
+          });
+        },
+      }),
+    ],
+  });
+  if (!result) return;
+
+  if (result.__delete) {
     const usage = exerciseUsage(ctx.state, exercise.id);
     if (usage.sessions) {
       // Deleting would leave those sets labelled "Removed exercise". Dropping
@@ -310,23 +455,24 @@ async function editExercise(ctx, exercise) {
     return;
   }
 
-  if (exerciseNameTaken(ctx.state, values.name, exercise?.id)) {
-    toast(`There is already an exercise called "${values.name}".`, { variant: 'danger' });
+  if (exerciseNameTaken(ctx.state, result.name, exercise?.id)) {
+    toast(`There is already an exercise called "${result.name}".`, { variant: 'danger' });
     return;
   }
 
-  const secondary = String(values.secondary ?? '')
+  const secondary = String(result.secondary ?? '')
     .split(',')
     .map((part) => part.trim().toLowerCase())
-    .filter((m) => MUSCLE_GROUPS.includes(m) && m !== values.muscle);
+    .filter((m) => muscleGroup(m) && m !== result.muscle);
 
   if (isNew) {
     ctx.commit('add exercise', (state) => {
       state.exercises.push(makeExercise({
-        name: values.name,
-        muscle: values.muscle,
+        name: result.name,
+        group: result.group,
+        muscle: result.muscle,
         secondary,
-        status: values.status,
+        status: result.status,
       }));
     }, { undoable: false });
     return;
@@ -334,12 +480,13 @@ async function editExercise(ctx, exercise) {
   // Renaming is a correction, so it propagates to every session that used it —
   // which is the point of storing the id rather than the name.
   ctx.commit('edit exercise', () => {
-    Object.assign(exercise, {
-      name: values.name,
-      muscle: values.muscle,
+    Object.assign(exercise, makeExercise({
+      name: result.name,
+      group: result.group,
+      muscle: result.muscle,
       secondary,
-      status: values.status,
-    });
+      status: result.status,
+    }), { id: exercise.id, createdAt: exercise.createdAt });
   }, { undoable: false });
 }
 
@@ -526,6 +673,8 @@ function renderHistory(ctx) {
 function sessionCard(ctx, session) {
   const totals = sessionTotals(session);
   const muscles = sessionMuscles(ctx.state, session);
+  const warmupNames = warmupMovements(ctx.state, session);
+  const warmedFor = warmupMinutes(session);
 
   return el('div.card.session', [
     el('div.card__body.stack--tight.stack', [
@@ -552,6 +701,13 @@ function sessionCard(ctx, session) {
         totals.volume ? tag(`${Math.round(totals.volume)} kg volume`) : null,
         ...muscles.map((m) => tag(m, 'teal')),
       ]),
+      warmupNames.length || warmedFor
+        ? el('div.row', [
+            el('span.section__meta', { text: 'Warm-up' }),
+            ...warmupNames.map((m) => tag(m.name)),
+            warmedFor ? tag(formatDuration(warmedFor)) : null,
+          ])
+        : null,
       el('ul.session__lines', (session.exercises ?? []).map((entry) =>
         el('li.break', [
           el('span.mono', {

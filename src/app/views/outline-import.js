@@ -16,13 +16,15 @@ export const OUTLINE_PROMPT = `Break this down as a Cairn outline. Use exactly t
 > what "done" means for this stage, concretely and testably
 ### Step title
 - A task small enough to start in one sitting @45m ^2026-09-01
+| An optional note about the line above it.
 
 Rules:
 - Thread type is one of: project, study, pipeline, habit, reading.
 - EVERY stage needs a "> " done-when line. It must be checkable, not vague.
 - Stages must be in the order they should be done — later ones stay locked until earlier ones finish.
 - Tasks are concrete actions, not headings. @45m is an optional estimate, ^YYYY-MM-DD an optional due date. Both are optional — leave them out rather than inventing one.
-- A URL in a task line is kept as a link on that task, so put one there if it is worth keeping.
+- A URL on any line is lifted out of the title and kept as a link on that record, so put one there if it is worth keeping.
+- A "| " line attaches a note to whatever line comes directly above it — thread, stage, step or task. Consecutive "| " lines are one note. Use them for context that is not a task.
 - No prose, no commentary, no other markdown. Only the lines above.`;
 
 export function openOutlineImport(ctx) {
@@ -98,6 +100,7 @@ export function openOutlineImport(ctx) {
         tag(`${s.steps} step${s.steps === 1 ? '' : 's'}`),
         tag(`${s.tasks} task${s.tasks === 1 ? '' : 's'}`),
         s.links ? tag(`${s.links} link${s.links === 1 ? '' : 's'}`) : null,
+        s.notes ? tag(`${s.notes} note${s.notes === 1 ? '' : 's'}`) : null,
       ]),
     );
 
@@ -143,6 +146,7 @@ export function openOutlineImport(ctx) {
                   ]),
                 ])
               : null,
+            ...annotationRows(thread),
             el('ul.stack--tight.stack', thread.stages.map((stage) =>
               el('li', [
                 el('div.row', [
@@ -151,6 +155,14 @@ export function openOutlineImport(ctx) {
                   tag(`${stage.steps.reduce((n, p) => n + p.tasks.length, 0)} tasks`),
                 ]),
                 el('div.hesitation.break', { text: stage.doneWhen }),
+                ...annotationRows(stage),
+                // Every task carrying a link or a note is listed, so what the
+                // parser lifted out of a title can be checked before it lands
+                // rather than discovered in the tree afterwards.
+                ...stage.steps.flatMap((step) => [
+                  ...annotationRows(step, step.title),
+                  ...step.tasks.filter(carriesAnnotation).flatMap((task) => annotationRows(task, task.title)),
+                ]),
               ]))),
           ]),
         ]),
@@ -208,6 +220,32 @@ export function openOutlineImport(ctx) {
   });
 }
 
+const carriesAnnotation = (record) => !!(record.links?.length || record.notes);
+
+/**
+ * The links and the note attached to one record, rendered so they can be read
+ * before the import is committed. Both are things the parser decided — text
+ * moved out of a title, a `|` line bound to the line above it — and the rule
+ * in outline.js is that such decisions are visible first.
+ */
+function annotationRows(record, label = null) {
+  if (!carriesAnnotation(record)) return [];
+  return [
+    el('div.annotation', [
+      label ? el('span.section__meta.break', { text: label }) : null,
+      ...(record.links ?? []).map((link) =>
+        el('a.tag', {
+          href: link.url,
+          target: '_blank',
+          rel: 'noopener noreferrer',
+          text: link.label || link.url,
+          title: link.url,
+        })),
+      record.notes ? el('div.annotation__note.break', { text: record.notes }) : null,
+    ]),
+  ];
+}
+
 /** Attach the confirm handler once, at the point the dialog supplies `close`. */
 function wireGo(button, onClick) {
   button.onclick = onClick;
@@ -216,8 +254,24 @@ function wireGo(button, onClick) {
 
 /** Turn the parsed tree into real records, in one undoable step. */
 function commitOutline(ctx, plan) {
-  const created = { threads: 0, stages: 0, tasks: 0, links: 0 };
+  const created = { threads: 0, stages: 0, tasks: 0, links: 0, notes: 0 };
   let firstThreadId = null;
+
+  /**
+   * Links and notes land on every level, not just tasks. Both arrays have
+   * always been on every record and the editor has always filled them; the
+   * parser is only catching up.
+   */
+  const annotate = (record, parsed) => {
+    for (const link of parsed.links ?? []) {
+      record.links.push(makeLink({ url: link.url, label: link.label }));
+      created.links += 1;
+    }
+    if (parsed.notes) {
+      record.notes = record.notes ? `${record.notes}\n\n${parsed.notes}` : parsed.notes;
+      created.notes += 1;
+    }
+  };
 
   ctx.commit('import outline', (state) => {
     for (const { thread, action, existing } of plan) {
@@ -230,24 +284,22 @@ function commitOutline(ctx, plan) {
         state.threads.push(target);
         created.threads += 1;
       }
+      annotate(target, thread);
       firstThreadId = firstThreadId ?? target.id;
 
       for (const stage of thread.stages) {
         const newStage = makeStage({ title: stage.title, doneWhen: stage.doneWhen });
+        annotate(newStage, stage);
         for (const step of stage.steps) {
           const newStep = makeStep({ title: step.title });
+          annotate(newStep, step);
           for (const task of step.tasks) {
             const newTask = makeTask({
               title: task.title,
               due: task.due,
               estimateMinutes: task.estimateMinutes,
             });
-            // The links array has always been on the task; only the parser
-            // could not fill it.
-            for (const link of task.links ?? []) {
-              newTask.links.push(makeLink({ url: link.url, label: link.label }));
-              created.links += 1;
-            }
+            annotate(newTask, task);
             newStep.tasks.push(newTask);
             created.tasks += 1;
           }
@@ -262,6 +314,7 @@ function commitOutline(ctx, plan) {
   toast(
     `Imported ${created.stages} stage(s) and ${created.tasks} task(s)` +
       (created.links ? ` with ${created.links} link(s)` : '') +
+      (created.notes ? ` and ${created.notes} note(s)` : '') +
       (created.threads ? ` into ${created.threads} new thread(s).` : '.'),
     { action: { label: 'Undo', onClick: () => { ctx.store.undo(); ctx.render(); } }, timeout: 10000 },
   );

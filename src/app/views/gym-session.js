@@ -10,9 +10,42 @@
 // records less than one line of text does.
 
 import { el, openDialog, confirm, toast, tag, select, input } from '../ui.js';
-import { makeGymSession, makeSessionExercise, makeSet, makePainRecord, MUSCLE_GROUPS, PAIN_TIMING } from '../../core/schema.js';
-import { activeExercises, exerciseById, exerciseName, lastSetsFor } from '../../core/gym.js';
+import {
+  makeGymSession,
+  makeSessionExercise,
+  makeSet,
+  makePainRecord,
+  makeExercise,
+  makeWarmup,
+  MUSCLE_GROUPS,
+  PAIN_TIMING,
+} from '../../core/schema.js';
+import {
+  exerciseById,
+  exerciseName,
+  exerciseOptionsForGroup,
+  exerciseNameTaken,
+  lastSetsFor,
+  warmups,
+  warmupName,
+  warmupNameTaken,
+} from '../../core/gym.js';
 import { todayISO } from '../../core/dates.js';
+
+/**
+ * Time inputs are hour-and-minute only.
+ *
+ * `step="60"` is what stops the browser offering a seconds spinner at all —
+ * without it a time input volunteers a third field nobody wants to fill in for
+ * a gym session that gets rounded to the hour anyway.
+ */
+const timeInput = (props) => el('input.input', { type: 'time', step: '60', ...props });
+
+/** Seconds are neither entered nor stored, so anything carrying them is trimmed. */
+const toMinuteTime = (value) => {
+  const text = String(value ?? '').trim();
+  return /^\d{1,2}:\d{2}/.test(text) ? text.slice(0, 5) : '';
+};
 
 const numeric = (props = {}) =>
   el('input.input.input--num', { type: 'number', inputmode: 'decimal', min: '0', step: 'any', ...props });
@@ -33,8 +66,12 @@ export function openSessionDialog(ctx, existing = null) {
 
   const draft = {
     date: existing?.date ?? ctx.today,
-    startTime: existing?.startTime ?? '',
-    endTime: existing?.endTime ?? '',
+    startTime: toMinuteTime(existing?.startTime),
+    endTime: toMinuteTime(existing?.endTime),
+    warmup: {
+      movementIds: [...(existing?.warmup?.movementIds ?? [])],
+      minutes: existing?.warmup?.minutes ?? null,
+    },
     notes: existing?.notes ?? '',
     exercises: (existing?.exercises ?? []).map((entry) => ({
       id: entry.id,
@@ -45,7 +82,6 @@ export function openSessionDialog(ctx, existing = null) {
     pain: [],
   };
 
-  const catalogue = activeExercises(ctx.state);
   const list = el('div.stack.sets', { id: 'session-exercises' });
   const painList = el('div.stack--tight.stack');
   const errorNode = el('div.field__error');
@@ -56,17 +92,15 @@ export function openSessionDialog(ctx, existing = null) {
     'aria-label': 'Session date',
     oninput: (e) => { draft.date = e.target.value || todayISO(); },
   });
-  const startInput = el('input.input', {
-    type: 'time',
-    value: draft.startTime ?? '',
+  const startInput = timeInput({
+    value: draft.startTime,
     'aria-label': 'Start time',
-    oninput: (e) => { draft.startTime = e.target.value; },
+    oninput: (e) => { draft.startTime = toMinuteTime(e.target.value); },
   });
-  const endInput = el('input.input', {
-    type: 'time',
-    value: draft.endTime ?? '',
+  const endInput = timeInput({
+    value: draft.endTime,
     'aria-label': 'End time',
-    oninput: (e) => { draft.endTime = e.target.value; },
+    oninput: (e) => { draft.endTime = toMinuteTime(e.target.value); },
   });
   const notesInput = el('textarea.textarea', {
     rows: 2,
@@ -83,9 +117,7 @@ export function openSessionDialog(ctx, existing = null) {
 
     if (!draft.exercises.length) {
       list.appendChild(el('p.field__hint', {
-        text: catalogue.length
-          ? 'Nothing logged yet. Pick an exercise below — the sets you did last time are filled in for you.'
-          : 'The library is empty. Add exercises in the Library tab first.',
+        text: 'Nothing logged yet. Pick a muscle group below, then an exercise — the sets you did last time are filled in for you.',
       }));
     }
 
@@ -211,25 +243,55 @@ export function openSessionDialog(ctx, existing = null) {
     });
   };
 
-  const picker = select(
-    [
-      { value: '', label: 'Add an exercise…' },
-      ...MUSCLE_GROUPS.flatMap((muscle) => {
-        const inGroup = catalogue.filter((e) => e.muscle === muscle);
-        return inGroup.length
-          ? [{ value: `__${muscle}`, label: `— ${muscle} —` }, ...inGroup.map((e) => ({ value: e.id, label: e.name }))]
-          : [];
-      }),
-    ],
+  /**
+   * Adding an exercise, in two steps: pick the muscle group, then the
+   * exercise.
+   *
+   * One flat dropdown of the whole library meant scrolling past legs to reach
+   * arms every time. Narrowing by group first cuts the second list to a
+   * handful, and within it the ones you have actually logged come first,
+   * most-recent-first — the exercise you are about to add is almost always one
+   * you added last week.
+   */
+  const groupPicker = select(
+    [{ value: '', label: 'Muscle group…' }, ...MUSCLE_GROUPS.map((g) => ({ value: g, label: g }))],
     '',
-    { 'aria-label': 'Add an exercise' },
+    { 'aria-label': 'Muscle group' },
   );
 
-  picker.addEventListener('change', () => {
-    const exerciseId = picker.value;
-    picker.value = '';
-    if (!exerciseId || exerciseId.startsWith('__')) return;
+  const exercisePicker = select([{ value: '', label: 'Pick a group first' }], '', {
+    'aria-label': 'Exercise',
+  });
+  exercisePicker.disabled = true;
 
+  const fillExercises = (group) => {
+    if (!group) {
+      exercisePicker.replaceChildren(el('option', { value: '', text: 'Pick a group first' }));
+      exercisePicker.disabled = true;
+      return;
+    }
+    const { recent, rest } = exerciseOptionsForGroup(ctx.state, group);
+    const options = [el('option', { value: '', text: 'Exercise…' })];
+
+    if (recent.length) {
+      const done = el('optgroup', { label: 'Done before' });
+      for (const e of recent) done.appendChild(el('option', { value: e.id, text: e.name }));
+      options.push(done);
+    }
+    if (rest.length) {
+      const other = el('optgroup', { label: recent.length ? 'Rest of the library' : 'In the library' });
+      for (const e of rest) other.appendChild(el('option', { value: e.id, text: e.name }));
+      options.push(other);
+    }
+    options.push(el('option', { value: '__new', text: `+ New ${group} exercise…` }));
+
+    exercisePicker.replaceChildren(...options);
+    exercisePicker.disabled = false;
+  };
+
+  groupPicker.addEventListener('change', () => fillExercises(groupPicker.value));
+
+  const addExercise = (exerciseId) => {
     const previous = lastSetsFor(ctx.state, exerciseId);
     draft.exercises.push({
       id: `draft_${draft.exercises.length}_${exerciseId}`,
@@ -243,10 +305,78 @@ export function openSessionDialog(ctx, existing = null) {
     if (previous.length) {
       toast(`${exerciseName(ctx.state, exerciseId)} — filled in with last time's ${previous.length} set(s). Change what changed.`, { timeout: 4000 });
     }
+  };
+
+  exercisePicker.addEventListener('change', () => {
+    const value = exercisePicker.value;
+    const group = groupPicker.value;
+    exercisePicker.value = '';
+    if (!value) return;
+    if (value === '__new') {
+      createExerciseInline(ctx, group, (id) => {
+        fillExercises(group);
+        addExercise(id);
+      });
+      return;
+    }
+    addExercise(value);
   });
+
+  // --- the warm-up ----------------------------------------------------------
+  //
+  // Separate from the exercise list because it is a different kind of thing:
+  // no sets, no load, no muscle group. Keeping mobility drills out of the
+  // muscle groups is what makes those groups a usable list of things to train.
+
+  const warmupList = el('div.warmup-picker');
+  const warmupMinutesInput = el('input.input.input--num', {
+    type: 'number',
+    min: '0',
+    step: '1',
+    value: draft.warmup.minutes ?? '',
+    placeholder: 'min',
+    'aria-label': 'Warm-up minutes',
+    oninput: (e) => { draft.warmup.minutes = toNumber(e.target.value); },
+  });
+
+  const drawWarmup = () => {
+    warmupList.replaceChildren();
+    const library = warmups(ctx.state);
+    if (!library.length) {
+      warmupList.appendChild(el('span.field__hint', { text: 'No warm-up movements yet. Add one below.' }));
+    }
+    for (const movement of library) {
+      const on = draft.warmup.movementIds.includes(movement.id);
+      warmupList.appendChild(
+        el('button.muscle-chip', {
+          type: 'button',
+          text: movement.name,
+          'aria-pressed': String(on),
+          'aria-label': `Warm-up: ${movement.name}`,
+          onclick: () => {
+            draft.warmup.movementIds = on
+              ? draft.warmup.movementIds.filter((id) => id !== movement.id)
+              : [...draft.warmup.movementIds, movement.id];
+            drawWarmup();
+          },
+        }),
+      );
+    }
+    warmupList.appendChild(
+      el('button.btn.btn--ghost.btn--sm', {
+        type: 'button',
+        text: '+ New movement',
+        onclick: () => createWarmupInline(ctx, (id) => {
+          draft.warmup.movementIds.push(id);
+          drawWarmup();
+        }),
+      }),
+    );
+  };
 
   draw();
   drawPain();
+  drawWarmup();
 
   return openDialog({
     title: isNew ? 'Log a session' : 'Session',
@@ -259,9 +389,18 @@ export function openSessionDialog(ctx, existing = null) {
       ]),
 
       el('div.stack--tight.stack', [
+        el('span.field__label', { text: 'Warm-up' }),
+        warmupList,
+        el('div.row', [
+          el('span.field__hint', { text: 'For how long' }),
+          warmupMinutesInput,
+        ]),
+      ]),
+
+      el('div.stack--tight.stack', [
         el('span.field__label', { text: 'Exercises' }),
         list,
-        el('div.row', [picker]),
+        el('div.row', [groupPicker, exercisePicker]),
       ]),
 
       painList,
@@ -302,6 +441,103 @@ export function openSessionDialog(ctx, existing = null) {
         return;
       }
       saveSession(ctx, existing, value);
+    },
+  });
+}
+
+/**
+ * Create an exercise without leaving the session.
+ *
+ * Asks for the name and nothing else: the group came from the picker one step
+ * ago, and re-asking for it would be the form demanding something it already
+ * knows. The specific muscle is left unset — it can be filled in later in the
+ * library, and blocking a session mid-log to classify a movement is exactly
+ * the friction that stops sessions getting logged.
+ */
+function createExerciseInline(ctx, group, onCreated) {
+  const name = input({ placeholder: 'e.g. Incline cable fly', 'aria-label': 'Exercise name' });
+  const errorNode = el('div.field__error');
+
+  openDialog({
+    title: `New ${group} exercise`,
+    body: el('div.stack', [
+      el('label.field', [el('span.field__label', { text: 'Name' }), name]),
+      el('p.field__hint', {
+        text: `It goes under ${group}. Set the specific muscle later in the library if you want it on the body diagram.`,
+      }),
+      errorNode,
+    ]),
+    footer: (close) => [
+      el('button.btn', { type: 'button', text: 'Cancel', onclick: () => close(null) }),
+      el('button.btn.btn--primary', {
+        type: 'button',
+        text: 'Add',
+        onclick: () => {
+          const value = name.value.trim();
+          if (!value) {
+            errorNode.textContent = 'It needs a name.';
+            name.focus();
+            return;
+          }
+          if (exerciseNameTaken(ctx.state, value)) {
+            errorNode.textContent = `"${value}" is already in the library.`;
+            return;
+          }
+          close(value);
+        },
+      }),
+    ],
+    onClose: (value) => {
+      if (!value) return;
+      let id = null;
+      ctx.commit('add exercise', (state) => {
+        const exercise = makeExercise({ name: value, group });
+        state.exercises.push(exercise);
+        id = exercise.id;
+      }, { undoable: false, rerender: false });
+      if (id) onCreated(id);
+    },
+  });
+}
+
+function createWarmupInline(ctx, onCreated) {
+  const name = input({ placeholder: 'e.g. Ankle rocks', 'aria-label': 'Warm-up movement name' });
+  const errorNode = el('div.field__error');
+
+  openDialog({
+    title: 'New warm-up movement',
+    body: el('div.stack', [
+      el('label.field', [el('span.field__label', { text: 'Name' }), name]),
+      errorNode,
+    ]),
+    footer: (close) => [
+      el('button.btn', { type: 'button', text: 'Cancel', onclick: () => close(null) }),
+      el('button.btn.btn--primary', {
+        type: 'button',
+        text: 'Add',
+        onclick: () => {
+          const value = name.value.trim();
+          if (!value) {
+            errorNode.textContent = 'It needs a name.';
+            return;
+          }
+          if (warmupNameTaken(ctx.state, value)) {
+            errorNode.textContent = `"${value}" is already there.`;
+            return;
+          }
+          close(value);
+        },
+      }),
+    ],
+    onClose: (value) => {
+      if (!value) return;
+      let id = null;
+      ctx.commit('add warm-up movement', (state) => {
+        const movement = makeWarmup({ name: value });
+        state.warmups.push(movement);
+        id = movement.id;
+      }, { undoable: false, rerender: false });
+      if (id) onCreated(id);
     },
   });
 }
@@ -354,6 +590,10 @@ function saveSession(ctx, existing, draft) {
       date: draft.date,
       startTime: draft.startTime || null,
       endTime: draft.endTime || null,
+      warmup: {
+        movementIds: [...draft.warmup.movementIds],
+        minutes: draft.warmup.minutes ?? null,
+      },
       notes: draft.notes,
       exercises: draft.exercises.map((entry) =>
         makeSessionExercise({

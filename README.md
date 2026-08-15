@@ -53,8 +53,9 @@ The second thing it solves: you learn something once, never retrieve it, and it'
 
 ## Parser
 > the grammar round-trips every fixture in tests/fixtures
+| Pratt parsing, not recursive descent — the precedence table is the spec.
 ### Expressions
-- Precedence climbing @2h
+- Precedence climbing @2h https://craftinginterpreters.com/parsing-expressions.html
 ```
 
 | Marker | Means |
@@ -64,9 +65,10 @@ The second thing it solves: you learn something once, never retrieve it, and it'
 | `> text` | That stage's done-when. **Required.** Consecutive `>` lines join into one sentence. |
 | `### Title` | Step. |
 | `- Task` | Task. `-`, `*`, `+` or `1.` all work. |
+| `\| note` | A note on whatever line is directly above it — thread, stage, step or task. Consecutive `\|` lines join into one. |
 | `@45m` | Optional estimate. `@2h`, `@1h30m` and `@90` also parse. |
 | `^2026-09-01` | Optional due date. |
-| a URL | Lifted out of the title onto the task's links. `[label](url)` keeps the label as the title. |
+| a URL | Lifted out of the title onto that record's links, labelled with its host. `[label](url)` keeps the label as the title. |
 
 The dialog has a **Copy the prompt for a chat** button. The loop is: describe your project to a chat, paste its answer into Cairn, confirm.
 
@@ -76,7 +78,8 @@ The parser is deliberately strict, because the failure that matters isn't a reje
 - **Counts are self-checked.** Markers found in the text must equal records produced, or the parser refuses rather than passing quietly.
 - **A stage with no done-when blocks the import** and names itself. Chats omit it constantly, and such a stage would be unstartable anyway.
 - **Duplicates are never created by accident.** A thread name you already have gets the new stages appended to it; stage titles that clash are listed before you commit.
-- **Anything inferred is reported** — tasks written straight under a stage get a step called "Tasks", and a URL lifted out of a title is counted, both shown in the preview before you commit.
+- **Anything inferred is reported, one line per decision** — a step invented to hold loose tasks, a URL moved out of a title, a note bound to the line above it. Each names its line, and the extracted links and notes are shown in the preview so they can be read before they land. A tally ("3 links moved") would not let you check any of them.
+- **A `|` line with nothing above it is an error**, like every other orphaned line. Notes and links do not create records, so they are outside the count self-check — but a `|` line is its own kind and is never counted as a task.
 
 Nothing is written until you confirm, and the whole import is one undo.
 
@@ -98,22 +101,48 @@ Weeks run **Sunday to Saturday**, everywhere and without exception — targets, 
 
 Sessions, not check-marks — *that you went* is not the useful part.
 
-The tab tracks two things: whether a lift is moving, and whether something hurts. Everything that did not serve one of those was taken out.
+The tab records what was lifted and what hurt. Everything that did not serve one of those was taken out — including, latterly, a per-exercise progression chart that looked useful and never got opened.
 
 A session records the date, start and end, and the exercises: sets, reps, weight, and a free-text note per exercise. That note is where "good pump", "no tension in the target muscle" and "first two sets locking out at the top" go; it is deliberately not a dropdown, because the useful notes are sentences. A second note covers the session as a whole — the warm-up, what was skipped, why it was short. A sentence records all of that better than a set of fields did.
 
 Entry is built for a phone between sets. Picking an exercise fills in the sets you did last time and **Repeat set** copies the row above, so most sessions are the last one with two numbers changed. A bodyweight movement records reps and leaves the weight empty.
 
+**Logging an exercise is two steps**: pick the muscle group, then the exercise. The second list is only that group's, with the ones you have actually logged first and most-recent-first within them — the exercise you are adding is nearly always one you added last week. There is a "+ New" option at the bottom that asks for a name and nothing else, because the group was answered one step ago.
+
+**A warm-up is its own section**, separate from the exercise list: which movements, and for how long. It draws from its own library of mobility and activation drills, which is where cat-cow belongs — it was under "core" before, which made that group a mix of things to train and things to do first.
+
+Times are hour-and-minute. Seconds are neither offered by the picker nor stored.
+
 ### The exercise library
 
-Exercises are things you maintain, not free text typed per session. Each carries a name, a primary muscle and secondaries, and a status: active, or dropped.
+Exercises are things you maintain, not free text typed per session. Each carries a name, a status, and **what it trains at two levels**: a broad group for display, and the specific muscle underneath it.
+
+| Group | Muscles |
+| --- | --- |
+| Chest | upper chest, mid chest, lower chest |
+| Back | lats, traps, rhomboids, lower back |
+| Shoulders | front delts, side delts, rear delts |
+| Arms | biceps, triceps, forearms |
+| Legs | quads, hamstrings, glutes, calves, adductors |
+| Core | abs, obliques |
+
+"Back" is true of a lat pulldown, a shrug and a good morning, and being true of all three is exactly what made it useless for deciding what to do today.
+
+**The specific muscle can be left unset**, and that is a real state rather than a defect: it means nothing has guessed. The library lists those at the top and keeps asking, because an exercise with no specific muscle is missing from the body diagram entirely.
+
+### The body diagram
+
+Two figures, front and back, with every specific muscle as a selectable region. Selecting a region picks that muscle; picking from the list highlights the region. They are two views of one selection, not a picture beside a form.
+
+The figures are built from rectangles and ellipses rather than traced anatomy. That is a decision, not a shortcut: this has to show *which region is selected*, not teach anatomy. Accurate paths would be a large hand-authoring job, would carry a licensing question if taken from anywhere, and would be harder to keep legible at thumbnail size in two themes.
+
+A muscle appears on the figure where you can actually see it — lats and glutes on the back, chest and quads on the front — and is **absent** from the other rather than drawn greyed. The two figures together cover the body once. Every region is focusable and activates on Enter or Space; selecting one does not rebuild the SVG, so the focus ring stays where it was.
 
 **Dropping never rewrites history.** The exercise leaves the picker and stays in every session that used it, with its sets exactly as they were. Deleting one that has been used is refused and offered as a drop instead. Renaming propagates, because a rename is a correction — which is the point of sessions storing the id rather than the name.
 
 ### The views
 
 - **This week against target** — done, target, still to do, days left, and a strip of the days you trained on.
-- **Progression** — one exercise over time, with the direction it is going. A bodyweight movement is tracked by reps, since there is no load to plot.
 - **Pain** — below.
 - **History** — every session, reopenable.
 
@@ -226,9 +255,9 @@ npm run test:e2e   # Playwright
 npm run test:all
 ```
 
-**Unit tests** cover logic, not interface: stage unlocking including reordering and which stages a move locks or unlocks, progress rollup, the spaced-repetition scheduler including resets and retirement, pipeline needs-action rules, local-time date arithmetic and the Sunday week boundary, planned-versus-logged time blocks and the activity model, gym weeks, session totals, per-exercise progression and pain grouping, every schema migration including each field folded into a note rather than dropped, the CSV reader against quoted newlines and ragged rows, the XLSX reader against a real ZIP including date-formatted cells, header mapping and duplicate detection, persistence with undo/quota/multi-tab conflicts, the outline parser against adversarial input, and the import validator against malformed files.
+**Unit tests** cover logic, not interface: stage unlocking including reordering and which stages a move locks or unlocks, progress rollup, the spaced-repetition scheduler including resets and retirement, pipeline needs-action rules, local-time date arithmetic and the Sunday week boundary, planned-versus-logged time blocks and the activity model, gym weeks, session totals, the two-level muscle taxonomy, the group-narrowed exercise picker and pain grouping, every schema migration including each field folded into a note rather than dropped, the CSV reader against quoted newlines and ragged rows, the XLSX reader against a real ZIP including date-formatted cells, header mapping and duplicate detection, persistence with undo/quota/multi-tab conflicts, the outline parser against adversarial input, and the import validator against malformed files.
 
-**End-to-end tests** cover the flows that matter: completing a stage unlocks the next and only the next; ticking a task below the fold leaves the page where it was, while navigating still starts at the top; moving a stage names the stages it locked; a failed attempt schedules correctly and appears in the queue on the right day; an extraction cannot be half-written; export then import round-trips exactly; a gym session records what was done and the week counts it against the target; a spreadsheet of applications is mapped, corrected, previewed and imported, with duplicates left out. Plus the edge cases — a due task inside a locked stage staying out of "needs action", a dropped exercise leaving old sessions intact, a completed task reading as done rather than overdue, a file that is not really a spreadsheet, a full storage quota, a second tab writing, and the narrow-screen layout.
+**End-to-end tests** cover the flows that matter: completing a stage unlocks the next and only the next; ticking a task below the fold leaves the page where it was, while navigating still starts at the top; moving a stage names the stages it locked; a failed attempt schedules correctly and appears in the queue on the right day; an extraction cannot be half-written; export then import round-trips exactly; a gym session records what was done and the week counts it against the target; the exercise picker narrows by group and offers what was logged most recently; the body diagram and the muscle list stay in step and both work from the keyboard; a spreadsheet of applications is mapped, corrected, previewed and imported, with duplicates left out. Plus the edge cases — a due task inside a locked stage staying out of "needs action", a dropped exercise leaving old sessions intact, a completed task reading as done rather than overdue, a file that is not really a spreadsheet, a full storage quota, a second tab writing, and the narrow-screen layout.
 
 The e2e suite downloads its own Chromium. If your machine already has one:
 

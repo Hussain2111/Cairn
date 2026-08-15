@@ -7,7 +7,7 @@
 import { uid } from './ids.js';
 import { todayISO, nowStamp } from './dates.js';
 
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 export const STORAGE_KEY = 'cairn.state';
 export const APP_VERSION = '1.0.0';
 
@@ -48,8 +48,53 @@ export const OUTREACH_CHANNELS = ['LinkedIn', 'Threads', 'email', 'other'];
 /** Three states, in the order a book moves through them. */
 export const READING_STATUSES = ['to read', 'reading', 'finished'];
 
-/** The muscle groups an exercise trains. Fixed list, deliberately short. */
-export const MUSCLE_GROUPS = ['chest', 'back', 'shoulders', 'legs', 'arms', 'core'];
+/**
+ * What an exercise trains, at two levels.
+ *
+ * The broad group is for grouping and display; the specific muscle is the
+ * level people actually train at and the level the body diagram maps to.
+ * "Back" is true of a lat pulldown and a shrug and a good morning, and being
+ * true of all three is what makes it useless for deciding what to do today.
+ */
+export const MUSCLE_TAXONOMY = {
+  chest: ['upper chest', 'mid chest', 'lower chest'],
+  back: ['lats', 'traps', 'rhomboids', 'lower back'],
+  shoulders: ['front delts', 'side delts', 'rear delts'],
+  arms: ['biceps', 'triceps', 'forearms'],
+  legs: ['quads', 'hamstrings', 'glutes', 'calves', 'adductors'],
+  core: ['abs', 'obliques'],
+};
+
+export const MUSCLE_GROUPS = Object.keys(MUSCLE_TAXONOMY);
+
+/** Every specific muscle, flat, in group order. */
+export const MUSCLES = Object.values(MUSCLE_TAXONOMY).flat();
+
+const GROUP_OF_MUSCLE = new Map(
+  Object.entries(MUSCLE_TAXONOMY).flatMap(([group, muscles]) => muscles.map((m) => [m, group])),
+);
+
+/** The broad group a specific muscle belongs to, or null if it is not one. */
+export function muscleGroup(muscle) {
+  return GROUP_OF_MUSCLE.get(muscle) ?? null;
+}
+
+export function isMuscle(value) {
+  return GROUP_OF_MUSCLE.has(value);
+}
+
+/**
+ * An exercise records both levels. `muscle` may be null while the group is
+ * known — that is the honest state for an exercise whose specific muscle the
+ * migration could not determine without guessing, and the library surfaces
+ * those so they can be corrected.
+ */
+export function normaliseMuscle(group, muscle) {
+  const g = MUSCLE_GROUPS.includes(group) ? group : null;
+  const m = isMuscle(muscle) ? muscle : null;
+  if (m) return { group: muscleGroup(m), muscle: m };
+  return { group: g ?? 'chest', muscle: null };
+}
 
 /** In the library, or deliberately stopped. */
 export const EXERCISE_STATUSES = ['active', 'dropped'];
@@ -82,32 +127,63 @@ export function hasExtraction(question) {
 
 /**
  * Seeded on first use so a session can be logged immediately instead of typing
- * out a library first. [name, primary, secondary[]].
+ * out a library first. [name, specific muscle, secondary muscles[]].
  */
 export const STARTER_EXERCISES = [
-  ['Bench press', 'chest', ['shoulders', 'arms']],
-  ['Incline dumbbell press', 'chest', ['shoulders']],
-  ['Cable fly', 'chest', []],
-  ['Chest press machine', 'chest', ['arms']],
-  ['Push-up', 'chest', ['core']],
-  ['Pull-up', 'back', ['arms']],
-  ['Barbell row', 'back', ['arms']],
-  ['Lat pulldown', 'back', ['arms']],
-  ['Seated cable row', 'back', ['arms']],
-  ['Overhead press', 'shoulders', ['arms']],
-  ['Lateral raise', 'shoulders', []],
-  ['Cable lateral raise', 'shoulders', []],
-  ['Squat', 'legs', ['core']],
-  ['Smith machine squat', 'legs', ['core']],
-  ['Deadlift', 'legs', ['back']],
-  ['Leg press', 'legs', []],
-  ['Romanian deadlift', 'legs', ['back']],
-  ['Leg curl', 'legs', []],
-  ['Barbell curl', 'arms', []],
-  ['Cable curl', 'arms', []],
-  ['Triceps pushdown', 'arms', []],
-  ['Plank', 'core', []],
-  ['Hanging leg raise', 'core', []],
+  ['Bench press', 'mid chest', ['front delts', 'triceps']],
+  ['Incline dumbbell press', 'upper chest', ['front delts']],
+  ['Cable fly', 'mid chest', []],
+  ['Chest press machine', 'mid chest', ['triceps']],
+  ['Dip', 'lower chest', ['triceps']],
+  ['Push-up', 'mid chest', ['triceps', 'abs']],
+  ['Pull-up', 'lats', ['biceps']],
+  ['Barbell row', 'lats', ['rhomboids', 'biceps']],
+  ['Lat pulldown', 'lats', ['biceps']],
+  ['Seated cable row', 'rhomboids', ['lats', 'biceps']],
+  ['Shrug', 'traps', []],
+  ['Back extension', 'lower back', ['glutes']],
+  ['Overhead press', 'front delts', ['triceps']],
+  ['Lateral raise', 'side delts', []],
+  ['Cable lateral raise', 'side delts', []],
+  ['Face pull', 'rear delts', ['rhomboids']],
+  ['Squat', 'quads', ['glutes', 'abs']],
+  ['Smith machine squat', 'quads', ['glutes']],
+  ['Leg extension', 'quads', []],
+  ['Deadlift', 'hamstrings', ['glutes', 'lower back']],
+  ['Romanian deadlift', 'hamstrings', ['glutes']],
+  ['Leg curl', 'hamstrings', []],
+  ['Hip thrust', 'glutes', ['hamstrings']],
+  ['Leg press', 'quads', ['glutes']],
+  ['Calf raise', 'calves', []],
+  ['Copenhagen plank', 'adductors', ['abs']],
+  ['Barbell curl', 'biceps', ['forearms']],
+  ['Cable curl', 'biceps', []],
+  ['Triceps pushdown', 'triceps', []],
+  ['Farmer carry', 'forearms', ['traps']],
+  ['Plank', 'abs', []],
+  ['Hanging leg raise', 'abs', []],
+  ['Cable woodchop', 'obliques', ['abs']],
+];
+
+/**
+ * Warm-up movements, seeded on first use.
+ *
+ * These are mobility and activation drills, not strength work: no sets, no
+ * load, no muscle group. Several of them used to sit under "core" in the
+ * exercise library, which made that group a mix of things to train and things
+ * to do before training.
+ */
+export const STARTER_WARMUPS = [
+  'Treadmill',
+  'Leg swings',
+  'Arm circles',
+  'Cat-cow',
+  'Bodyweight squats',
+  'Walking lunges',
+  'Hip circles',
+  'Band pull-aparts',
+  'Wall angels',
+  'Scap rows',
 ];
 
 export const DEFAULT_SETTINGS = {
@@ -246,15 +322,29 @@ export function makeOutreach(patch = {}) {
  * dropped exercise keeps resolving and the history it appears in stays exactly
  * as it was.
  */
-export function makeExercise({ name = '', muscle = 'chest', secondary = [], status = 'active' } = {}) {
+export function makeExercise({ name = '', group = 'chest', muscle = null, secondary = [], status = 'active' } = {}) {
+  const resolved = normaliseMuscle(group, muscle);
   return {
     id: uid('ex'),
     name,
-    muscle: MUSCLE_GROUPS.includes(muscle) ? muscle : 'chest',
-    secondary: secondary.filter((m) => MUSCLE_GROUPS.includes(m) && m !== muscle),
+    /** The broad group. Always set. */
+    group: resolved.group,
+    /** The specific muscle. Null when it is genuinely not known. */
+    muscle: resolved.muscle,
+    /** Other specific muscles it also trains. */
+    secondary: [...new Set(secondary.filter((m) => isMuscle(m) && m !== resolved.muscle))],
     status: EXERCISE_STATUSES.includes(status) ? status : 'active',
     createdAt: todayISO(),
   };
+}
+
+/**
+ * A warm-up movement. Deliberately not an exercise: it has no sets, reps or
+ * load, and filing cat-cow under "core" made the core group unusable as a list
+ * of things to train.
+ */
+export function makeWarmup({ name = '' } = {}) {
+  return { id: uid('wu'), name, createdAt: todayISO() };
 }
 
 export function makeSet({ reps = null, weight = null } = {}) {
@@ -278,6 +368,8 @@ export function makeGymSession(patch = {}) {
     date: todayISO(),
     startTime: null,
     endTime: null,
+    /** What was done before the working sets, and for how long. */
+    warmup: { movementIds: [], minutes: null },
     exercises: [],
     notes: '',
     createdAt: nowStamp(),
@@ -450,6 +542,7 @@ export function createEmptyState() {
     applications: [],
     outreach: [],
     exercises: [],
+    warmups: [],
     gymSessions: [],
     painRecords: [],
     reading: [],
@@ -464,6 +557,7 @@ export const COLLECTIONS = [
   'applications',
   'outreach',
   'exercises',
+  'warmups',
   'gymSessions',
   'painRecords',
   'reading',
