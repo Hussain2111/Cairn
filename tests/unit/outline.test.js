@@ -41,7 +41,7 @@ test('a well-formed outline parses into the full tree', () => {
     'Integer literals', 'Float literals', 'Hex and binary',
   ]);
   assert.deepEqual(result.stats,
-    { threads: 1, stages: 2, steps: 3, tasks: 5, implicitSteps: 0, links: 0, tasksWithLinks: 0 });
+    { threads: 1, stages: 2, steps: 3, tasks: 5, implicitSteps: 0, links: 0, notes: 0 });
 });
 
 test('estimates and due dates are pulled off the task title', () => {
@@ -406,9 +406,9 @@ test('a bare URL in a task line becomes a link and leaves the title', () => {
   assert.equal(parsed.ok, true);
   const [task] = parsed.threads[0].stages[0].steps[0].tasks;
   assert.equal(task.title, 'Read the spec', 'the title reads as a title again');
-  assert.deepEqual(task.links, [{ url: 'https://example.com/spec', label: '' }]);
+  assert.deepEqual(task.links, [{ url: 'https://example.com/spec', label: 'example.com' }],
+    'a bare URL is labelled with its host, since the full address is unreadable as a tag');
   assert.equal(parsed.stats.links, 1);
-  assert.equal(parsed.stats.tasksWithLinks, 1);
 });
 
 test('a markdown link keeps its text as the title and its url as the link', () => {
@@ -477,7 +477,7 @@ test('a task that is only a URL keeps the URL as its title rather than becoming 
   assert.match(parsed.errors.map((e) => e.message).join(' '), /no title/);
 });
 
-test('lifting a link out of a title is reported, once, rather than silently', () => {
+test('every lifted link is reported on its own line, not as a tally', () => {
   const parsed = parseOutline(`# T
 ## S
 > done when this is done
@@ -487,10 +487,10 @@ test('lifting a link out of a title is reported, once, rather than silently', ()
 - Three
 `);
   assert.equal(parsed.ok, true);
-  const messages = parsed.warnings.map((w) => w.message).join(' ');
-  assert.match(messages, /2 links in 2 task titles moved onto the task itself/);
-  assert.equal(parsed.warnings.filter((w) => /moved onto the task/.test(w.message)).length, 1,
-    'one summary, not one per task');
+  const moved = parsed.warnings.filter((w) => /was moved out of the title/.test(w.message));
+  assert.equal(moved.length, 2, 'one per decision, so each can be checked');
+  assert.deepEqual(moved.map((w) => w.line), [5, 6], 'each carries the line it came from');
+  assert.match(moved[0].message, /https:\/\/example\.com\/a/);
 });
 
 test('a task with no link has an empty links array, not a missing one', () => {
@@ -502,7 +502,6 @@ test('a task with no link has an empty links array, not a missing one', () => {
 `);
   assert.deepEqual(parsed.threads[0].stages[0].steps[0].tasks[0].links, []);
   assert.equal(parsed.stats.links, 0);
-  assert.equal(parsed.stats.tasksWithLinks, 0);
 });
 
 test('a URL somewhere other than a task line is still refused', () => {
@@ -515,4 +514,121 @@ https://example.com/stray
 `);
   assert.equal(parsed.ok, false);
   assert.match(parsed.errors[0].message, /does not match the outline format/);
+});
+
+// --- notes ------------------------------------------------------------------
+
+const withNote = (body) => parseOutline(`# T
+## S
+> done when this is done
+### Step
+- A task
+${body}
+`);
+
+test('a | line attaches to the task above it', () => {
+  const parsed = withNote('| why this task exists');
+  assert.equal(parsed.ok, true);
+  const [task] = parsed.threads[0].stages[0].steps[0].tasks;
+  assert.equal(task.notes, 'why this task exists');
+  assert.equal(parsed.stats.notes, 1);
+});
+
+test('consecutive | lines join into one note', () => {
+  const parsed = withNote('| the first half\n| and the second');
+  const [task] = parsed.threads[0].stages[0].steps[0].tasks;
+  assert.equal(task.notes, 'the first half and the second');
+  assert.equal(parsed.stats.notes, 1, 'two lines, one note');
+});
+
+test('a | line attaches to a stage when that is what precedes it', () => {
+  const parsed = parseOutline(`# T
+## S
+> done when this is done
+| this stage is the risky one
+### Step
+- A task
+`);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.threads[0].stages[0].notes, 'this stage is the risky one');
+  assert.equal(parsed.threads[0].stages[0].steps[0].tasks[0].notes, '', 'the task did not take it');
+});
+
+test('a | line attaches to a thread or a step, whichever came last', () => {
+  const parsed = parseOutline(`# T
+| about the whole thread
+## S
+> done when this is done
+### Step
+| about the step
+- A task
+`);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.threads[0].notes, 'about the whole thread');
+  assert.equal(parsed.threads[0].stages[0].steps[0].notes, 'about the step');
+});
+
+test('an orphaned | line is an error, like every other line with nothing to attach to', () => {
+  const parsed = parseOutline(`| a note about nothing
+# T
+## S
+> done when this is done
+### Step
+- A task
+`);
+  assert.equal(parsed.ok, false);
+  assert.match(parsed.errors[0].message, /needs something above it/);
+  assert.equal(parsed.errors[0].line, 1);
+});
+
+test('an empty | line is an error rather than a blank note', () => {
+  const parsed = withNote('|');
+  assert.equal(parsed.ok, false);
+  assert.match(parsed.errors.map((e) => e.message).join(' '), /note is empty/);
+});
+
+test('attaching a note is reported, naming what it landed on', () => {
+  const parsed = withNote('| context');
+  const attached = parsed.warnings.filter((w) => /attached to/.test(w.message));
+  assert.equal(attached.length, 1);
+  assert.match(attached[0].message, /"A task"/);
+});
+
+test('a | line is not counted as a task by the self-check', () => {
+  const parsed = withNote('| a note\n| another line of it');
+  assert.equal(parsed.ok, true, 'the self-check does not see two extra tasks');
+  assert.equal(parsed.stats.tasks, 1);
+});
+
+test('a URL and a note can sit on the same record', () => {
+  const parsed = parseOutline(`# T
+## S
+> done when this is done
+### Step
+- Read the spec https://example.com/spec @45m ^2026-08-13
+| the appendix is the part that matters
+`);
+  assert.equal(parsed.ok, true);
+  const [task] = parsed.threads[0].stages[0].steps[0].tasks;
+  assert.equal(task.title, 'Read the spec');
+  assert.equal(task.estimateMinutes, 45);
+  assert.equal(task.due, '2026-08-13');
+  assert.equal(task.links[0].url, 'https://example.com/spec');
+  assert.equal(task.notes, 'the appendix is the part that matters');
+});
+
+test('a URL is lifted out of a stage or step title too, not only a task', () => {
+  const parsed = parseOutline(`# T
+## Stage https://example.com/stage
+> done when this is done
+### Step https://example.com/step
+- A task
+`);
+  assert.equal(parsed.ok, true);
+  const stage = parsed.threads[0].stages[0];
+  assert.equal(stage.title, 'Stage');
+  assert.equal(stage.links[0].url, 'https://example.com/stage');
+  assert.equal(stage.steps[0].title, 'Step');
+  assert.equal(stage.steps[0].links[0].url, 'https://example.com/step');
+  assert.equal(parsed.stats.links, 2);
 });

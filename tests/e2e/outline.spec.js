@@ -208,8 +208,13 @@ test('a URL in a task line becomes a link on the task', async ({ page }) => {
   const dialog = page.locator('dialog');
   await expect(dialog).toContainText('3 tasks');
   await expect(dialog).toContainText('2 links');
-  // Lifting a link out of a title changes the title, so it is reported.
-  await expect(dialog).toContainText('moved onto the task itself');
+  // Lifting a link out of a title changes the title, so each one is reported
+  // on its own line with the URL it moved, not summarised as a count.
+  await expect(dialog).toContainText('The URL https://example.com/spec was moved out of the title');
+  await expect(dialog).toContainText('labelled "the RFC"');
+  // And both appear in the preview, so they can be checked before they land.
+  await expect(dialog.locator('.annotation')).toHaveCount(2);
+  await expect(dialog.locator('.annotation').first()).toContainText('example.com');
 
   await dialog.getByRole('button', { name: 'Import', exact: true }).click();
 
@@ -224,7 +229,10 @@ test('a URL in a task line becomes a link on the task', async ({ page }) => {
 
   await expect(page.locator('.task', { hasText: 'Plain task' })).not.toContainText('link');
 
-  // And the link is really on the task, reachable from its editor.
+  // And the link is really on the task, reachable from its editor — labelled
+  // with its host, since a full URL is unreadable as a tag.
   await spec.locator('.task__title').click();
-  await expect(page.locator('dialog').getByRole('link', { name: 'https://example.com/spec' })).toBeVisible();
+  const link = page.locator('dialog').getByRole('link', { name: 'example.com' });
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute('href', 'https://example.com/spec');
 });

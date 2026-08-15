@@ -165,10 +165,14 @@ test('warm-up, the slot and the skipped list are folded into the session note', 
   assert.match(session.notes, /Duration: 70 min\./, 'a duration with no clock times has nowhere else to go');
   assert.match(session.notes, /Skipped Leg press \(occupied — rack taken\)\./);
 
-  for (const key of ['routineId', 'warmup', 'warmupMinutes', 'durationMinutes', 'skipped']) {
+  for (const key of ['routineId', 'warmupMinutes', 'durationMinutes', 'skipped']) {
     assert.equal(session[key], undefined, `${key} is gone`);
   }
   assert.equal(state.routines, undefined);
+  // v8→v9 gave every session a warm-up section, so `warmup` exists again — as
+  // the new shape, not the old boolean.
+  assert.deepEqual(state.gymSessions[0].warmup, { movementIds: [], minutes: null });
+  assert.equal(state.gymSessions[0].warmupMinutes, undefined);
   assert.ok(notes.some((n) => /folded the warm-up, slot and skipped/.test(n)));
 });
 
@@ -460,6 +464,135 @@ test('every question carries an extraction afterwards, empty or not', () => {
 
 test('a v7 file with nothing in it migrates cleanly', () => {
   const { state, error } = migrate(v7());
+  assert.equal(error, null);
+  assert.equal(state.schemaVersion, SCHEMA_VERSION);
+});
+
+// --- v8 → v9: the gym gets specific ------------------------------------------
+
+function v8({ ...patch } = {}) {
+  return {
+    schemaVersion: 8,
+    threads: [], questions: [], applications: [], outreach: [],
+    exercises: [], gymSessions: [], painRecords: [], reading: [], timeBlocks: [],
+    settings: {},
+    ...patch,
+  };
+}
+
+const ex = (id, name, muscle, secondary = []) => ({ id, name, muscle, secondary, status: 'active' });
+
+test('an exercise gains a specific muscle read from its name, and the group follows', () => {
+  const { state } = migrate(v8({
+    exercises: [
+      ex('e1', 'Bench press', 'chest'),
+      ex('e2', 'Incline dumbbell press', 'chest'),
+      ex('e3', 'Lat pulldown', 'back'),
+      ex('e4', 'Shrug', 'back'),
+      ex('e5', 'Lateral raise', 'shoulders'),
+      ex('e6', 'Calf raise', 'legs'),
+    ],
+  }));
+  assert.deepEqual(
+    state.exercises.map((e) => [e.name, e.group, e.muscle]),
+    [
+      ['Bench press', 'chest', 'mid chest'],
+      ['Incline dumbbell press', 'chest', 'upper chest'],
+      ['Lat pulldown', 'back', 'lats'],
+      ['Shrug', 'back', 'traps'],
+      ['Lateral raise', 'shoulders', 'side delts'],
+      ['Calf raise', 'legs', 'calves'],
+    ],
+  );
+});
+
+test('an ambiguous name keeps its broad group and is surfaced rather than guessed at', () => {
+  const { state, notes } = migrate(v8({
+    exercises: [ex('e1', 'Pendlay row', 'back'), ex('e2', 'Machine thing', 'legs')],
+  }));
+  assert.deepEqual(
+    state.exercises.map((e) => [e.name, e.group, e.muscle]),
+    [['Pendlay row', 'back', null], ['Machine thing', 'legs', null]],
+  );
+  const report = notes.join(' ');
+  assert.match(report, /could not be read from the name without guessing/);
+  assert.match(report, /Pendlay row/);
+  assert.match(report, /Machine thing/);
+});
+
+test('mobility drills move out of the muscle groups and into the warm-up library', () => {
+  const { state, notes } = migrate(v8({
+    exercises: [ex('e1', 'Cat-cow', 'core'), ex('e2', 'Band pull-aparts', 'core'), ex('e3', 'Plank', 'core')],
+  }));
+  assert.deepEqual(state.exercises.map((e) => e.name), ['Plank'], 'only the strength movement stays');
+  assert.deepEqual(state.warmups.map((w) => w.name), ['Cat-cow', 'Band pull-aparts']);
+  assert.match(notes.join(' '), /moved 2 mobility movement\(s\)/);
+});
+
+test('a drill a session actually references stays in the library as well', () => {
+  const { state, notes } = migrate(v8({
+    exercises: [ex('e1', 'Treadmill', 'legs')],
+    gymSessions: [{
+      id: 'g1', date: '2026-08-10', startTime: null, endTime: null, notes: '',
+      exercises: [{ id: 'x1', exerciseId: 'e1', sets: [{ id: 's1', reps: 1, weight: null }], note: '' }],
+    }],
+  }));
+  assert.deepEqual(state.warmups.map((w) => w.name), ['Treadmill']);
+  assert.deepEqual(state.exercises.map((e) => e.name), ['Treadmill'],
+    'removing it would leave the logged session pointing at nothing');
+  assert.match(notes.join(' '), /because a logged session references it/);
+});
+
+test('secondary muscles that were broad groups are cleared and counted, not promoted', () => {
+  const { state, notes } = migrate(v8({
+    exercises: [ex('e1', 'Bench press', 'chest', ['shoulders', 'arms'])],
+  }));
+  assert.deepEqual(state.exercises[0].secondary, [],
+    '"arms" names three muscles, so picking one would have been a guess');
+  assert.match(notes.join(' '), /cleared 2 secondary muscle\(s\)/);
+});
+
+test('a secondary that is already a specific muscle survives', () => {
+  const { state } = migrate(v8({
+    exercises: [ex('e1', 'Bench press', 'chest', ['triceps', 'front delts'])],
+  }));
+  assert.deepEqual(state.exercises[0].secondary, ['triceps', 'front delts']);
+});
+
+test('session times lose their seconds', () => {
+  const { state, notes } = migrate(v8({
+    gymSessions: [
+      { id: 'g1', date: '2026-08-10', startTime: '18:05:00', endTime: '19:20:30', exercises: [], notes: '' },
+      { id: 'g2', date: '2026-08-11', startTime: '07:00', endTime: null, exercises: [], notes: '' },
+    ],
+  }));
+  assert.equal(state.gymSessions[0].startTime, '18:05');
+  assert.equal(state.gymSessions[0].endTime, '19:20');
+  assert.equal(state.gymSessions[1].startTime, '07:00', 'one already without seconds is untouched');
+  assert.equal(state.gymSessions[1].endTime, null);
+  assert.match(notes.join(' '), /dropped the seconds from 2 session time\(s\)/);
+});
+
+test('every session gains a warm-up section', () => {
+  const { state } = migrate(v8({
+    gymSessions: [{ id: 'g1', date: '2026-08-10', startTime: null, endTime: null, exercises: [], notes: '' }],
+  }));
+  assert.deepEqual(state.gymSessions[0].warmup, { movementIds: [], minutes: null });
+});
+
+test('the warm-up library is seeded when there is a gym but nothing to move into it', () => {
+  const { state, notes } = migrate(v8({ exercises: [ex('e1', 'Bench press', 'chest')] }));
+  assert.ok(state.warmups.length >= 10);
+  assert.match(notes.join(' '), /seeded the warm-up library/);
+});
+
+test('an empty file does not get a warm-up library it has no use for', () => {
+  const { state } = migrate(v8());
+  assert.deepEqual(state.warmups, []);
+});
+
+test('a v8 file with nothing in it migrates cleanly', () => {
+  const { state, error } = migrate(v8());
   assert.equal(error, null);
   assert.equal(state.schemaVersion, SCHEMA_VERSION);
 });

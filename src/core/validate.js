@@ -15,11 +15,13 @@ import {
   READING_STATUSES,
   THREAD_STATUSES,
   MUSCLE_GROUPS,
+  MUSCLES,
   EXERCISE_STATUSES,
   PAIN_TIMING,
   MISS_CAUSES,
   deepClone,
 } from './schema.js';
+import { muscleGroup } from './schema.js';
 import { isValidISODate, isValidTime } from './dates.js';
 import { BLOCK_STATUSES } from './timeblocks.js';
 import { parseActivity, activityThreadId } from './activities.js';
@@ -337,12 +339,35 @@ function validateRest(state, report) {
     if (!exercise.id) exercise.id = `ex_recovered_${i}`;
     fixString(exercise, 'name', `${path}.name`, report, { fallback: 'Untitled exercise' });
     if (!exercise.name.trim()) exercise.name = 'Untitled exercise';
-    fixEnum(exercise, 'muscle', MUSCLE_GROUPS, `${path}.muscle`, report, 'core');
+    fixEnum(exercise, 'group', MUSCLE_GROUPS, `${path}.group`, report, 'chest');
+    // A null specific muscle is a real state, not a defect: it means the
+    // migration declined to guess, and the library asks for it to be set.
+    if (exercise.muscle !== null && exercise.muscle !== undefined && exercise.muscle !== '') {
+      fixEnum(exercise, 'muscle', MUSCLES, `${path}.muscle`, report, null);
+    } else {
+      exercise.muscle = null;
+    }
+    if (exercise.muscle && muscleGroup(exercise.muscle) !== exercise.group) {
+      report.warn(path, `"${exercise.name}" is filed under ${exercise.group} but ${exercise.muscle} is a ${muscleGroup(exercise.muscle)} muscle — the muscle wins`);
+      exercise.group = muscleGroup(exercise.muscle);
+    }
     fixEnum(exercise, 'status', EXERCISE_STATUSES, `${path}.status`, report, 'active');
     fixArray(exercise, 'secondary', `${path}.secondary`, report);
     exercise.secondary = [...new Set(exercise.secondary
-      .filter((m) => MUSCLE_GROUPS.includes(m))
+      .filter((m) => MUSCLES.includes(m))
       .filter((m) => m !== exercise.muscle))];
+    return true;
+  });
+
+  state.warmups = state.warmups.filter((movement, i) => {
+    const path = `warmups[${i}]`;
+    if (!isObject(movement)) {
+      report.error(path, 'warm-up movement is not an object');
+      return true;
+    }
+    if (!movement.id) movement.id = `wu_recovered_${i}`;
+    fixString(movement, 'name', `${path}.name`, report, { fallback: 'Untitled movement' });
+    if (!movement.name.trim()) movement.name = 'Untitled movement';
     return true;
   });
 
@@ -379,11 +404,23 @@ function validateRest(state, report) {
       report.warn(path, 'gym session has no date — it is kept but will not count towards any week');
     }
     for (const key of ['startTime', 'endTime']) {
+      // Seconds are neither entered nor stored, so a value carrying them is
+      // trimmed rather than refused — the hour and minute are the real value.
+      if (typeof session[key] === 'string' && /^\d{1,2}:\d{2}:/.test(session[key])) {
+        report.warn(`${path}.${key}`, `"${session[key]}" carried seconds — trimmed to the minute`);
+        session[key] = session[key].slice(0, 5);
+      }
       if (session[key] && !isValidTime(session[key])) {
         report.warn(`${path}.${key}`, `"${session[key]}" is not a valid HH:MM time — cleared`);
         session[key] = null;
       }
     }
+
+    if (!isObject(session.warmup)) session.warmup = { movementIds: [], minutes: null };
+    fixArray(session.warmup, 'movementIds', `${path}.warmup.movementIds`, report);
+    session.warmup.movementIds = session.warmup.movementIds.filter((id) => typeof id === 'string');
+    session.warmup.minutes = positiveOrNull(session.warmup.minutes, `${path}.warmup.minutes`, report);
+
     fixArray(session, 'exercises', `${path}.exercises`, report);
     session.exercises = session.exercises.filter((entry, ei) => {
       const ePath = `${path}.exercises[${ei}]`;
@@ -500,6 +537,16 @@ function crossCheck(state, report) {
           'includes an exercise that is not in this file — the sets are kept and shown as "Removed exercise"',
         );
       }
+    }
+  }
+
+  const warmupIds = new Set((state.warmups ?? []).map((w) => w.id));
+  for (const session of state.gymSessions ?? []) {
+    const ids = session.warmup?.movementIds ?? [];
+    const known = ids.filter((id) => warmupIds.has(id));
+    if (known.length !== ids.length) {
+      report.warn(`gymSessions[${session.id}]`, 'names a warm-up movement that is not in this file — the unknown one is dropped from the session');
+      session.warmup.movementIds = known;
     }
   }
 
@@ -624,6 +671,7 @@ export function summarise(state) {
     outreach: (state.outreach ?? []).length,
     exercises: (state.exercises ?? []).length,
     gymSessions: (state.gymSessions ?? []).length,
+    warmups: (state.warmups ?? []).length,
     painRecords: (state.painRecords ?? []).length,
     reading: (state.reading ?? []).length,
     timeBlocks: (state.timeBlocks ?? []).length,

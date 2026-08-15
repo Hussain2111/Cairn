@@ -12,7 +12,9 @@
 //     grammar does not recognise is a hard error carrying its line number and
 //     the offending text. Nothing is ever skipped.
 //   * Anything the parser decides for you -- an implicit step, a defaulted
-//     thread type -- is reported as a warning you see before committing.
+//     thread type, a URL moved out of a title, a note bound to the line above
+//     it -- is reported as a warning you see before committing, one per
+//     decision rather than as a tally.
 //   * Counts are self-checked: the markers found in the raw text must equal the
 //     records produced. A mismatch is an internal error, surfaced loudly.
 //
@@ -23,10 +25,16 @@
 //   > done when ...           the preceding stage's done-when (required)
 //   ### Step title            step
 //   - Task title @45m ^2026-09-01    task, optional estimate and due date
+//   | a note                  note on whatever line precedes it
 //
 // Bullets may be -, * or +, or numbered (1. / 1)). Surrounding ** ** is
 // stripped from titles. A fenced code block wrapping the whole paste is
 // ignored, since chat output usually arrives inside one.
+//
+// A URL written into any title is lifted out of it and onto that record's
+// links. A `|` line attaches to the thread, stage, step or task above it, and
+// consecutive `|` lines are one note. Both are decisions the parser makes for
+// you, so both are reported line by line and shown in the preview.
 
 import { THREAD_TYPES } from './schema.js';
 import { isValidISODate } from './dates.js';
@@ -44,8 +52,9 @@ export const OUTLINE_EXAMPLE = `# Compiler project (project)
 
 ## Parser
 > the grammar round-trips every fixture in tests/fixtures
+| Pratt parsing, not recursive descent — the precedence table is the spec.
 ### Expressions
-- Precedence climbing @2h
+- Precedence climbing @2h https://craftinginterpreters.com/parsing-expressions.html
 - Unary operators
 `;
 
@@ -56,6 +65,7 @@ const STEP = /^###(?!#)\s*(.+)$/;
 const DONE_WHEN = /^>\s?(.*)$/;
 const BULLET = /^[-*+]\s+(.+)$/;
 const NUMBERED = /^\d+[.)]\s+(.+)$/;
+const NOTE = /^\|\s?(.*)$/;
 const TYPE_SUFFIX = /^(.*?)\s*\(([^()]+)\)\s*$/;
 
 /** Strip markdown emphasis and stray backticks from a title. */
@@ -73,13 +83,29 @@ const BARE_URL = /(^|\s)(https?:\/\/[^\s<>]+?)(?=[).,;:!?'"]*(?:\s|$))/g;
 const MARKDOWN_LINK = /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g;
 
 /**
- * URLs written into a task line.
+ * The host of a URL, used to label a bare link.
  *
- * The model has always had a `links` array on every task and the editor has
+ * A link rendered as its full URL is unreadable in a row of tags, and "the
+ * link" tells you nothing when there are two. The host is the shortest thing
+ * that distinguishes them and needs no judgement to derive.
+ */
+export function hostLabel(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * URLs written into a title.
+ *
+ * The model has always had a `links` array on every record and the editor has
  * always been able to fill it; only the parser could not. Nothing new is asked
- * of the writer for this — a URL sitting in a task line is unambiguous — so it
- * is lifted out of the title and onto the task, and the title reads as a title
- * again. A markdown link keeps its text as the label.
+ * of the writer for this — a URL sitting in a line is unambiguous — so it is
+ * lifted out of the title and onto the record, and the title reads as a title
+ * again. A markdown link keeps its text as the label; a bare one is labelled
+ * with its host.
  */
 function extractLinks(text) {
   const links = [];
@@ -92,7 +118,7 @@ function extractLinks(text) {
   });
 
   out = out.replace(BARE_URL, (_match, lead, url) => {
-    links.push({ url, label: '' });
+    links.push({ url, label: hostLabel(url) });
     return lead;
   });
 
@@ -127,6 +153,26 @@ function extractDue(text) {
   return { text: stripped, due: candidate, invalid: null };
 }
 
+/**
+ * Pull the links out of a title and report each one by line.
+ *
+ * Reported individually rather than as a tally: moving text out of a title is
+ * a decision the parser made, and the doctrine at the top of this file is that
+ * every such decision is visible before it is committed. A count at the end
+ * ("3 links moved") does not let you check any of them.
+ */
+function titleWithLinks(raw, lineNo, report, line) {
+  const { text, links } = extractLinks(raw);
+  for (const link of links) {
+    report.warn(
+      lineNo,
+      `The URL ${link.url} was moved out of the title and attached as a link${link.label ? ` labelled "${link.label}"` : ''}.`,
+      line,
+    );
+  }
+  return { text, links };
+}
+
 class Report {
   constructor() {
     this.errors = [];
@@ -157,6 +203,11 @@ export function parseOutline(source) {
   let thread = null;
   let stage = null;
   let step = null;
+  // The record a `|` line would attach to: whatever was last created, at any
+  // level. Tracked separately from thread/stage/step because those are the
+  // *open containers*, and a note belongs to the last thing written, not to
+  // the container it happens to sit in.
+  let last = null;
   let inFence = false;
   let sawAnyContent = false;
 
@@ -177,7 +228,8 @@ export function parseOutline(source) {
     if (threadMatch) {
       sawAnyContent = true;
       seen.threads += 1;
-      let name = cleanTitle(threadMatch[1]);
+      const threadLinked = titleWithLinks(threadMatch[1], lineNo, report, line);
+      let name = cleanTitle(threadLinked.text);
       let type = 'project';
 
       const typed = name.match(TYPE_SUFFIX);
@@ -205,10 +257,11 @@ export function parseOutline(source) {
         continue;
       }
 
-      thread = { name, type, stages: [], line: lineNo };
+      thread = { name, type, stages: [], links: threadLinked.links, notes: '', line: lineNo };
       threads.push(thread);
       stage = null;
       step = null;
+      last = thread;
       continue;
     }
 
@@ -221,13 +274,15 @@ export function parseOutline(source) {
         report.error(lineNo, 'A step needs a stage above it (a ## line).', line);
         continue;
       }
-      const title = cleanTitle(stepMatch[1]);
+      const stepLinked = titleWithLinks(stepMatch[1], lineNo, report, line);
+      const title = cleanTitle(stepLinked.text);
       if (!title) {
         report.error(lineNo, 'This step has no title.', line);
         continue;
       }
-      step = { title, tasks: [], line: lineNo };
+      step = { title, tasks: [], links: stepLinked.links, notes: '', line: lineNo };
       stage.steps.push(step);
+      last = step;
       continue;
     }
 
@@ -240,7 +295,8 @@ export function parseOutline(source) {
         report.error(lineNo, 'A stage needs a thread above it (a # line).', line);
         continue;
       }
-      const title = cleanTitle(stageMatch[1]);
+      const stageLinked = titleWithLinks(stageMatch[1], lineNo, report, line);
+      const title = cleanTitle(stageLinked.text);
       if (!title) {
         report.error(lineNo, 'This stage has no title.', line);
         continue;
@@ -249,9 +305,10 @@ export function parseOutline(source) {
         report.error(lineNo, `"${title}" appears twice in "${thread.name}". Give them distinct titles.`, line);
         continue;
       }
-      stage = { title, doneWhen: '', steps: [], line: lineNo };
+      stage = { title, doneWhen: '', steps: [], links: stageLinked.links, notes: '', line: lineNo };
       thread.stages.push(stage);
       step = null;
+      last = stage;
       continue;
     }
 
@@ -293,7 +350,7 @@ export function parseOutline(source) {
       let text = taskMatch[1];
       // Links come out first: a URL can contain an "@" or a "^", and pulling
       // it clear means neither marker can be read out of the middle of one.
-      const linked = extractLinks(text);
+      const linked = titleWithLinks(text, lineNo, report, line);
       text = linked.text;
       const estimate = extractEstimate(text);
       text = estimate.text;
@@ -309,20 +366,49 @@ export function parseOutline(source) {
         report.error(lineNo, 'This task has no title.', line);
         continue;
       }
-      step.tasks.push({
+      const task = {
         title,
         estimateMinutes: estimate.minutes,
         due: due.due,
         links: linked.links,
+        notes: '',
         line: lineNo,
-      });
+      };
+      step.tasks.push(task);
+      last = task;
+      continue;
+    }
+
+    // --- note -------------------------------------------------------------
+    // Attaches to whatever was written last, at any level. That is the only
+    // rule that needs no thought while writing: put the note under the thing
+    // it is about.
+    const noteMatch = line.match(NOTE);
+    if (noteMatch) {
+      sawAnyContent = true;
+      if (!last) {
+        report.error(lineNo, 'A note needs something above it to attach to.', line);
+        continue;
+      }
+      const text = noteMatch[1].trim();
+      if (!text) {
+        report.error(lineNo, 'This note is empty.', line);
+        continue;
+      }
+      // Consecutive | lines are one note, the same way consecutive > lines are
+      // one done-when.
+      const joined = last.notes ? `${last.notes} ${text}` : text;
+      if (!last.notes) {
+        report.warn(lineNo, `This note was attached to "${last.title ?? last.name}".`, line);
+      }
+      last.notes = joined;
       continue;
     }
 
     // --- anything else is refused, never ignored --------------------------
     report.error(
       lineNo,
-      'This line does not match the outline format. Expected # thread, ## stage, > done-when, ### step, or - task.',
+      'This line does not match the outline format. Expected # thread, ## stage, > done-when, ### step, - task, or | note.',
       line,
     );
   }
@@ -353,18 +439,15 @@ export function parseOutline(source) {
 
   const stats = countTree(threads);
 
-  if (stats.tasksWithLinks) {
-    report.warn(
-      0,
-      `${stats.links} link${stats.links === 1 ? '' : 's'} in ${stats.tasksWithLinks} task title${stats.tasksWithLinks === 1 ? '' : 's'} ` +
-      'moved onto the task itself, so the title reads as a title. Nothing was lost.',
-    );
-  }
-
   // --- the self-check ----------------------------------------------------
   // Every marker in the text became a record, or was rejected with an error.
   // If those two numbers disagree the parser dropped something, and that is
   // never allowed to pass quietly.
+  //
+  // Notes and links are deliberately outside this check: they do not create
+  // records, they annotate them. A `|` line in particular must never be
+  // counted as a task — it is its own kind now, and tallying it as a bullet
+  // would make the check fail on every outline that uses one.
   if (report.errors.length === 0) {
     const mismatches = [];
     for (const key of ['threads', 'stages', 'steps', 'tasks']) {
@@ -393,23 +476,28 @@ export function countTree(threads) {
   let tasks = 0;
   let implicitSteps = 0;
   let links = 0;
-  let tasksWithLinks = 0;
+  let notes = 0;
+
+  const annotations = (record) => {
+    links += (record.links ?? []).length;
+    if (record.notes) notes += 1;
+  };
+
   for (const thread of threads) {
+    annotations(thread);
     stages += thread.stages.length;
     for (const stage of thread.stages) {
+      annotations(stage);
       steps += stage.steps.length;
       for (const step of stage.steps) {
+        annotations(step);
         if (step.implicit) implicitSteps += 1;
         tasks += step.tasks.length;
-        for (const task of step.tasks) {
-          const count = (task.links ?? []).length;
-          links += count;
-          if (count) tasksWithLinks += 1;
-        }
+        for (const task of step.tasks) annotations(task);
       }
     }
   }
-  return { threads: threads.length, stages, steps, tasks, implicitSteps, links, tasksWithLinks };
+  return { threads: threads.length, stages, steps, tasks, implicitSteps, links, notes };
 }
 
 /**

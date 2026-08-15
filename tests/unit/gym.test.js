@@ -14,9 +14,14 @@ import {
   exerciseMuscles,
   activeExercises,
   droppedExercises,
-  exerciseProgression,
   lastSetsFor,
-  trainedExerciseIds,
+  recentExerciseIds,
+  exerciseOptionsForGroup,
+  exercisesInGroup,
+  unclassifiedExercises,
+  warmupMinutes,
+  warmupMovements,
+  seedWarmups,
   seedLibrary,
   painByLocation,
   painTable,
@@ -38,11 +43,11 @@ function fixture({ target = 4 } = {}) {
   const state = createEmptyState();
   state.settings.gymWeeklyTarget = target;
 
-  const bench = makeExercise({ name: 'Bench press', muscle: 'chest', secondary: ['arms'] });
-  const cableFly = makeExercise({ name: 'Cable fly', muscle: 'chest' });
-  const row = makeExercise({ name: 'Barbell row', muscle: 'back', secondary: ['arms'] });
-  const squat = makeExercise({ name: 'Squat', muscle: 'legs' });
-  const pullup = makeExercise({ name: 'Pull-up', muscle: 'back' });
+  const bench = makeExercise({ name: 'Bench press', muscle: 'mid chest', secondary: ['triceps'] });
+  const cableFly = makeExercise({ name: 'Cable fly', muscle: 'mid chest' });
+  const row = makeExercise({ name: 'Barbell row', muscle: 'lats', secondary: ['biceps'] });
+  const squat = makeExercise({ name: 'Squat', muscle: 'quads' });
+  const pullup = makeExercise({ name: 'Pull-up', muscle: 'lats' });
   state.exercises.push(bench, cableFly, row, squat, pullup);
 
   const add = (date, entries, patch = {}) => {
@@ -101,7 +106,7 @@ test('the session duration comes from the clock, and never goes negative', () =>
 test('a session lists the muscles it touched, primary and secondary', () => {
   const { state, bench, row, add } = fixture();
   const session = add('2026-08-03', [[bench, [[10, 60]]], [row, [[10, 50]]]]);
-  assert.deepEqual(sessionMuscles(state, session), ['chest', 'back', 'arms']);
+  assert.deepEqual(sessionMuscles(state, session), ['mid chest', 'lats', 'biceps', 'triceps']);
 });
 
 test('an exercise logged with no sets is not part of what the session touched', () => {
@@ -110,10 +115,105 @@ test('an exercise logged with no sets is not part of what the session touched', 
   assert.deepEqual(sessionMuscles(state, session), []);
 });
 
-test('secondary muscles are listed with the primary, deduplicated', () => {
+test('secondary muscles are listed with the primary, in canonical order', () => {
   const { state, bench } = fixture();
-  assert.deepEqual(exerciseMuscles(state, bench.id), ['chest', 'arms']);
+  assert.deepEqual(exerciseMuscles(state, bench.id), ['mid chest', 'triceps']);
   assert.deepEqual(exerciseMuscles(state, 'nonsense'), []);
+});
+
+// --- the taxonomy -----------------------------------------------------------
+
+test('an exercise carries both levels, and the group follows the muscle', () => {
+  const bench = makeExercise({ name: 'Bench press', muscle: 'mid chest' });
+  assert.equal(bench.muscle, 'mid chest');
+  assert.equal(bench.group, 'chest', 'the group is derived, not asked for twice');
+
+  // A group that contradicts the muscle loses: the muscle is the specific claim.
+  const wrong = makeExercise({ name: 'Shrug', group: 'legs', muscle: 'traps' });
+  assert.equal(wrong.group, 'back');
+});
+
+test('an unknown muscle leaves the group set and the muscle null, rather than guessing', () => {
+  const vague = makeExercise({ name: 'Pendlay row', group: 'back', muscle: 'something' });
+  assert.equal(vague.group, 'back');
+  assert.equal(vague.muscle, null);
+});
+
+test('unclassified exercises are findable, because they are missing from the diagram', () => {
+  const state = createEmptyState();
+  state.exercises.push(
+    makeExercise({ name: 'Bench press', muscle: 'mid chest' }),
+    makeExercise({ name: 'Pendlay row', group: 'back' }),
+  );
+  assert.deepEqual(unclassifiedExercises(state).map((e) => e.name), ['Pendlay row']);
+});
+
+test('a group lists only the exercises filed under it', () => {
+  const { state } = fixture();
+  assert.deepEqual(exercisesInGroup(state, 'chest').map((e) => e.name), ['Bench press', 'Cable fly']);
+  assert.deepEqual(exercisesInGroup(state, 'core').map((e) => e.name), []);
+});
+
+// --- the picker -------------------------------------------------------------
+
+test('the picker offers what was logged most recently first', () => {
+  const { state, bench, cableFly, add } = fixture();
+  add('2026-08-01', [[cableFly, [[12, 15]]]]);
+  add('2026-08-08', [[bench, [[10, 60]]]]);
+
+  assert.deepEqual(
+    recentExerciseIds(state).map((id) => exerciseName(state, id)),
+    ['Bench press', 'Cable fly'],
+    'the newest session comes first',
+  );
+});
+
+test('the picker narrows to one group, logged ones before the rest of the library', () => {
+  const { state, bench, row, add } = fixture();
+  add('2026-08-01', [[row, [[10, 60]]]]);
+  add('2026-08-08', [[bench, [[10, 60]]]]);
+
+  const chest = exerciseOptionsForGroup(state, 'chest');
+  assert.deepEqual(chest.recent.map((e) => e.name), ['Bench press']);
+  assert.deepEqual(chest.rest.map((e) => e.name), ['Cable fly'], 'never logged, so it comes after');
+  assert.equal(chest.recent.concat(chest.rest).some((e) => e.name === 'Barbell row'), false,
+    'a back exercise is not offered under chest');
+});
+
+test('a dropped exercise leaves the picker even if it was logged recently', () => {
+  const { state, bench, add } = fixture();
+  add('2026-08-08', [[bench, [[10, 60]]]]);
+  bench.status = 'dropped';
+  assert.deepEqual(exerciseOptionsForGroup(state, 'chest').recent.map((e) => e.name), []);
+});
+
+// --- warm-ups ---------------------------------------------------------------
+
+test('the warm-up library seeds once and only once', () => {
+  const state = createEmptyState();
+  assert.ok(seedWarmups(state) >= 10);
+  const count = state.warmups.length;
+  assert.equal(seedWarmups(state), 0, 'seeding twice does not duplicate');
+  assert.equal(state.warmups.length, count);
+});
+
+test('a session names its warm-up movements and how long they took', () => {
+  const state = createEmptyState();
+  seedWarmups(state);
+  const [first, second] = state.warmups;
+  const session = makeGymSession({
+    date: '2026-08-10',
+    warmup: { movementIds: [first.id, second.id], minutes: 10 },
+  });
+  assert.equal(warmupMinutes(session), 10);
+  assert.deepEqual(warmupMovements(state, session).map((m) => m.name), [first.name, second.name]);
+});
+
+test('a warm-up movement that is gone is named rather than rendered blank', () => {
+  const state = createEmptyState();
+  const session = makeGymSession({ warmup: { movementIds: ['wu_gone'], minutes: null } });
+  assert.deepEqual(warmupMovements(state, session).map((m) => m.name), ['Removed movement']);
+  assert.equal(warmupMinutes(session), 0);
 });
 
 // --- the catalogue ----------------------------------------------------------
@@ -129,7 +229,7 @@ test('dropping an exercise hides it from the picker without touching history', (
   assert.equal(exerciseName(state, bench.id), 'Bench press', 'still named in the session');
   assert.deepEqual(exerciseUsage(state, bench.id), { sessions: 1, sets: 2 });
   assert.equal(sessionTotals(state.gymSessions[0]).sets, 2);
-  assert.deepEqual(sessionMuscles(state, state.gymSessions[0]), ['chest', 'arms'],
+  assert.deepEqual(sessionMuscles(state, state.gymSessions[0]), ['mid chest', 'triceps'],
     'the session it appears in is unchanged');
 });
 
@@ -177,68 +277,6 @@ test('a session note holds whatever the structured fields used to', () => {
   session.notes = 'Ten minutes of warm-up. Skipped leg press, machine occupied.';
   assert.match(session.notes, /warm-up/);
   assert.match(session.notes, /Skipped leg press/);
-});
-
-// --- progression ------------------------------------------------------------
-
-test('progression is oldest first and headlines the heaviest set', () => {
-  const { state, bench, add } = fixture();
-  add('2026-08-05', [[bench, [[8, 65], [6, 70]]]]);
-  add('2026-07-22', [[bench, [[10, 60], [10, 60]]]]);
-  add('2026-07-29', [[bench, [[10, 62.5]]]]);
-
-  const points = exerciseProgression(state, bench.id);
-  assert.deepEqual(points.map((p) => p.date), ['2026-07-22', '2026-07-29', '2026-08-05']);
-  assert.equal(points[2].topWeight, 70);
-  assert.equal(points[2].topReps, 6);
-  assert.equal(points[0].volume, 1200);
-  assert.equal(points[0].bodyweight, false);
-});
-
-test('a bodyweight movement progresses by reps, and says so', () => {
-  const { state, pullup, add } = fixture();
-  add('2026-07-22', [[pullup, [[6, null], [5, null]]]]);
-  add('2026-08-05', [[pullup, [[9, null], [8, null]]]]);
-
-  const points = exerciseProgression(state, pullup.id);
-  assert.equal(points.every((p) => p.bodyweight), true);
-  assert.equal(points[0].topReps, 6);
-  assert.equal(points[1].topReps, 9);
-  assert.equal(points[1].topWeight, 0, 'there is no load to plot');
-  assert.equal(points[1].volume, 0, 'and no volume either');
-  assert.equal(points[1].reps, 17);
-});
-
-test('at equal weight the heavier set is the one with more reps', () => {
-  const { state, bench, add } = fixture();
-  add('2026-08-05', [[bench, [[6, 70], [9, 70], [12, 40]]]]);
-  const [point] = exerciseProgression(state, bench.id);
-  assert.deepEqual([point.topWeight, point.topReps], [70, 9]);
-});
-
-test('adding an exercise offers the sets from the last time it was done', () => {
-  const { state, bench, add } = fixture();
-  add('2026-07-22', [[bench, [[10, 60]]]]);
-  add('2026-08-05', [[bench, [[8, 65], [6, 70]]]]);
-
-  assert.deepEqual(lastSetsFor(state, bench.id), [{ reps: 8, weight: 65 }, { reps: 6, weight: 70 }]);
-  assert.deepEqual(lastSetsFor(state, 'nonsense'), []);
-});
-
-test('two sessions on the same day still have a defined order', () => {
-  const { state, bench, add } = fixture();
-  const first = add('2026-08-05', [[bench, [[10, 60]]]]);
-  const second = add('2026-08-05', [[bench, [[8, 70]]]]);
-  first.createdAt = second.createdAt = '2026-08-05T18:00:00';
-
-  assert.deepEqual(sessions(state).map((s) => s.id), [second.id, first.id]);
-  assert.deepEqual(lastSetsFor(state, bench.id), [{ reps: 8, weight: 70 }]);
-});
-
-test('only exercises actually done appear in the progression picker', () => {
-  const { state, bench, squat, add } = fixture();
-  add('2026-08-05', [[bench, [[10, 60]]], [squat, []]]);
-  assert.deepEqual(trainedExerciseIds(state), [bench.id], 'a block with no sets is not a data point');
 });
 
 // --- pain -------------------------------------------------------------------

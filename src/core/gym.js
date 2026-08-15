@@ -9,12 +9,25 @@
 // Weeks run Sunday to Saturday, from the one constant in dates.js.
 
 import { todayISO, startOfWeek, endOfWeek, weekDates, daysLeftInWeek, withinRange, timeToMinutes } from './dates.js';
-import { MUSCLE_GROUPS, STARTER_EXERCISES, makeExercise } from './schema.js';
+import {
+  MUSCLE_GROUPS,
+  MUSCLES,
+  STARTER_EXERCISES,
+  STARTER_WARMUPS,
+  makeExercise,
+  makeWarmup,
+  muscleGroup,
+  isMuscle,
+} from './schema.js';
 
 // --- the library ------------------------------------------------------------
 
+// Group first, then specific muscle within it, then name. An exercise whose
+// specific muscle is unknown sorts to the top of its group, where it reads as
+// the thing needing attention rather than hiding in the middle of the list.
 const byMuscleThenName = (a, b) =>
-  MUSCLE_GROUPS.indexOf(a.muscle) - MUSCLE_GROUPS.indexOf(b.muscle) ||
+  MUSCLE_GROUPS.indexOf(a.group) - MUSCLE_GROUPS.indexOf(b.group) ||
+  MUSCLES.indexOf(a.muscle ?? '') - MUSCLES.indexOf(b.muscle ?? '') ||
   String(a.name).localeCompare(String(b.name));
 
 export function allExercises(state) {
@@ -43,12 +56,31 @@ export function exerciseName(state, id) {
   return exerciseById(state, id)?.name ?? 'Removed exercise';
 }
 
-/** Primary and secondary together, in canonical order, deduplicated. */
+/** Primary and secondary specific muscles, in canonical order, deduplicated. */
 export function exerciseMuscles(state, id) {
   const exercise = exerciseById(state, id);
   if (!exercise) return [];
   const set = new Set([exercise.muscle, ...(exercise.secondary ?? [])].filter(Boolean));
-  return MUSCLE_GROUPS.filter((m) => set.has(m));
+  return MUSCLES.filter((m) => set.has(m));
+}
+
+/** The broad groups an exercise touches, derived from its muscles. */
+export function exerciseGroups(state, id) {
+  const exercise = exerciseById(state, id);
+  if (!exercise) return [];
+  const set = new Set(exerciseMuscles(state, id).map(muscleGroup).filter(Boolean));
+  if (exercise.group) set.add(exercise.group);
+  return MUSCLE_GROUPS.filter((g) => set.has(g));
+}
+
+/** Exercises in one broad group, whatever their specific muscle. */
+export function exercisesInGroup(state, group) {
+  return activeExercises(state).filter((e) => e.group === group);
+}
+
+/** Exercises whose specific muscle was never determined. Shown so they can be fixed. */
+export function unclassifiedExercises(state) {
+  return allExercises(state).filter((e) => !e.muscle);
 }
 
 export function exerciseUsage(state, id) {
@@ -78,6 +110,44 @@ export function seedLibrary(state) {
     state.exercises.push(makeExercise({ name, muscle, secondary }));
   }
   return state.exercises.length;
+}
+
+// --- the warm-up library ----------------------------------------------------
+
+export function warmups(state) {
+  return [...(state?.warmups ?? [])].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+
+export function warmupById(state, id) {
+  return (state?.warmups ?? []).find((w) => w.id === id) ?? null;
+}
+
+export function warmupName(state, id) {
+  return warmupById(state, id)?.name ?? 'Removed movement';
+}
+
+export function warmupNameTaken(state, name, exceptId = null) {
+  const wanted = String(name ?? '').trim().toLowerCase();
+  if (!wanted) return false;
+  return (state?.warmups ?? []).some(
+    (w) => w.id !== exceptId && String(w.name).trim().toLowerCase() === wanted,
+  );
+}
+
+export function seedWarmups(state) {
+  if (!Array.isArray(state.warmups)) state.warmups = [];
+  if (state.warmups.length) return 0;
+  for (const name of STARTER_WARMUPS) state.warmups.push(makeWarmup({ name }));
+  return state.warmups.length;
+}
+
+export function warmupMinutes(session) {
+  const n = Number(session?.warmup?.minutes);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+export function warmupMovements(state, session) {
+  return (session?.warmup?.movementIds ?? []).map((id) => ({ id, name: warmupName(state, id) }));
 }
 
 // --- sessions ---------------------------------------------------------------
@@ -145,7 +215,13 @@ export function sessionMuscles(state, session) {
     if (!(entry.sets ?? []).length) continue;
     for (const muscle of exerciseMuscles(state, entry.exerciseId)) seen.add(muscle);
   }
-  return MUSCLE_GROUPS.filter((m) => seen.has(m));
+  return MUSCLES.filter((m) => seen.has(m));
+}
+
+/** The broad groups a session touched, for a compact summary line. */
+export function sessionGroups(state, session) {
+  const seen = new Set(sessionMuscles(state, session).map(muscleGroup).filter(Boolean));
+  return MUSCLE_GROUPS.filter((g) => seen.has(g));
 }
 
 // --- the week ---------------------------------------------------------------
@@ -180,50 +256,6 @@ export function weekDaySessions(state, iso = todayISO()) {
   return weekDates(startOfWeek(iso)).map((date) => ({ date, sessions: byDate.get(date) ?? [] }));
 }
 
-// --- progression ------------------------------------------------------------
-
-/**
- * One point per session that included this exercise, oldest first.
- *
- * Bodyweight movements record reps and no weight, so `topWeight` is 0 for them
- * and `topReps` carries the progression instead. `bodyweight` says which of the
- * two to read.
- */
-export function exerciseProgression(state, exerciseId) {
-  const points = [];
-  for (const session of state?.gymSessions ?? []) {
-    const sets = (session.exercises ?? [])
-      .filter((x) => x.exerciseId === exerciseId)
-      .flatMap((x) => x.sets ?? []);
-    if (!sets.length) continue;
-
-    let top = null;
-    let reps = 0;
-    let volume = 0;
-    for (const set of sets) {
-      reps += num(set.reps);
-      volume += setVolume(set);
-      // Heaviest wins; at equal weight, the one with more reps.
-      if (!top || num(set.weight) > num(top.weight) ||
-        (num(set.weight) === num(top.weight) && num(set.reps) > num(top.reps))) {
-        top = set;
-      }
-    }
-    points.push({
-      sessionId: session.id,
-      date: session.date,
-      sets: sets.length,
-      reps,
-      volume,
-      topWeight: num(top?.weight),
-      topReps: num(top?.reps),
-      bodyweight: sets.every((set) => num(set.weight) === 0),
-    });
-  }
-  return points.sort((a, b) => String(a.date).localeCompare(String(b.date)));
-}
-
-/** The sets done for this exercise last time, so entry starts from them. */
 export function lastSetsFor(state, exerciseId) {
   for (const session of sessions(state)) {
     for (const entry of session.exercises ?? []) {
@@ -235,15 +267,40 @@ export function lastSetsFor(state, exerciseId) {
   return [];
 }
 
-/** Every exercise this log has actually done, for the progression picker. */
-export function trainedExerciseIds(state) {
-  const seen = new Set();
-  for (const session of state?.gymSessions ?? []) {
+/**
+ * Exercises this log has actually done, most recently first.
+ *
+ * The picker offers these before anything else: the exercise you are about to
+ * log is overwhelmingly likely to be one you logged last week, and a list
+ * ordered by recency puts it within a tap or two. `isMuscle` never enters into
+ * it — an exercise is offered because it was *done*, not because of what it
+ * trains.
+ */
+export function recentExerciseIds(state, { group = null } = {}) {
+  const byId = new Map();
+  for (const session of sessions(state)) {
     for (const entry of session.exercises ?? []) {
-      if ((entry.sets ?? []).length) seen.add(entry.exerciseId);
+      if (!(entry.sets ?? []).length) continue;
+      if (byId.has(entry.exerciseId)) continue;
+      byId.set(entry.exerciseId, session.date);
     }
   }
-  return [...seen];
+  let ids = [...byId.keys()];
+  if (group) ids = ids.filter((id) => exerciseById(state, id)?.group === group);
+  return ids;
+}
+
+/**
+ * What the exercise dropdown shows for a group: everything logged before in
+ * that group, most-recent-first, then the rest of the group's active library.
+ */
+export function exerciseOptionsForGroup(state, group) {
+  const recent = recentExerciseIds(state, { group })
+    .map((id) => exerciseById(state, id))
+    .filter((e) => e && e.status !== 'dropped');
+  const seen = new Set(recent.map((e) => e.id));
+  const rest = exercisesInGroup(state, group).filter((e) => !seen.has(e.id));
+  return { recent, rest };
 }
 
 // --- pain -------------------------------------------------------------------
