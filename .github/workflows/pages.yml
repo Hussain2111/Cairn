@@ -23,7 +23,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The desktop shell is a devDependency, but nothing in CI launches it, and
+      # the Electron binary is a ~100 MB download on every run.
       - run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
       - run: npm test
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e

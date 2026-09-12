@@ -214,7 +214,7 @@ The attempt dialog tells you what the scheduler will do *before* you commit to i
 
 ## Your data
 
-Everything lives in `localStorage` under `cairn.state`, in this browser, on this device. No account, no server, no telemetry. Nothing is ever sent anywhere — which also means **sharing the app's URL shares the app, not your data**; anyone who opens it gets an empty Cairn.
+Everything lives in `localStorage` under `cairn.state`, in this browser, on this device — or, if you run the [desktop app](#running-it-as-a-desktop-app), in that app's own data directory. No account, no server, no telemetry. Nothing is ever sent anywhere — which also means **sharing the app's URL shares the app, not your data**; anyone who opens it gets an empty Cairn.
 
 **It does not sync.** Your laptop and your phone are independent copies. To move between them: Settings → **Export JSON**, get the file across, Settings → **Import**. Use *Import and merge* if you've added things on both sides — it keeps both and skips records it already has.
 
@@ -246,6 +246,54 @@ npm start          # http://127.0.0.1:4321
 
 Note that `127.0.0.1:4321` and the published site are different origins, so they hold **separate data**.
 
+## Running it as a desktop app
+
+Same app, its own window, its own icon in the dock. No tab, no address bar, and nothing that disappears when you close the browser.
+
+```bash
+npm install
+npm run desktop          # run it from source
+```
+
+To build an installer:
+
+```bash
+npm run desktop:dist     # .dmg on macOS, .exe on Windows, .AppImage on Linux -> dist/
+npm run desktop:pack     # unpacked build, faster, for checking a change
+```
+
+Each platform builds its own installer only — run it on the machine you want the app on. Nothing is code-signed, so the first launch wants the usual right-click → Open on macOS, or **More info → Run anyway** on Windows.
+
+**Getting your existing data in.** The desktop app is a different origin from the website, so it opens empty — the same way your laptop and your phone are independent copies. In the browser: Settings → **Export JSON**. In the desktop app: Settings → **Import**. After that the two are separate stores; pick one and stay there, or move files across the way you would between devices.
+
+Where the desktop copy lives:
+
+| Platform | Directory |
+| --- | --- |
+| macOS | `~/Library/Application Support/Cairn` |
+| Windows | `%APPDATA%\Cairn` |
+| Linux | `~/.config/Cairn` |
+
+Export is still the backup. That directory is not one to hand-edit.
+
+### What the shell does
+
+The app itself is unchanged — the desktop build serves the same files that GitHub Pages does. The shell is `desktop/main.js`, and its decisions are worth knowing:
+
+**Files are served over a `cairn://` scheme, not `file://`.** `file://` has an opaque origin, which means no `localStorage` — and `localStorage` is the entire database. A registered standard scheme gives a stable origin, `cairn://app`, that does not change across app updates, reinstalls or install paths, so yesterday's data is still there tomorrow. It keeps ES modules working too, which `file://` does not.
+
+**One window.** Two windows over one store would trip the app's own *another tab has changed this data* banner — which exists for browser tabs a shell cannot control, and here simply need not happen. Launching Cairn again focuses the window you already have.
+
+**Links leave.** A reading link, a job posting on a pipeline record, a docs page on a task — anything that is not the app opens in your real browser rather than trapping you in a window with no address bar.
+
+**The window remembers where it was,** and refuses to reopen off-screen after a monitor is unplugged.
+
+**The Edit menu has no Undo item, on purpose.** `⌘Z` is Cairn's undo: the only way back from a deleted thread, not just a typo. A menu accelerator is consumed by the menu before the page ever sees the key, so claiming `⌘Z` there would quietly downgrade app undo to text-field undo. Leaving it off keeps the desktop app behaving exactly like the browser one.
+
+The renderer gets no preload script and no Node access; it is the same untrusted web app it is on Pages. `scripts/assets.mjs` holds the path resolution the dev server and the shell share, traversal guard included, and it is unit-tested.
+
+The app icon is generated from the same shapes as `favicon.svg` by `npm run desktop:icon` — the repo has no image dependency, and four rounded rectangles and a circle did not seem worth adding one for.
+
 ## Tests
 
 ```bash
@@ -269,7 +317,7 @@ CHROMIUM_PATH=/path/to/chromium npm run test:e2e
 
 Vanilla HTML, CSS and JavaScript as ES modules. No framework, no build step, no runtime dependencies beyond one vendored library: [fflate](https://github.com/101arrowz/fflate) lives in `vendor/fflate` because an `.xlsx` file is a ZIP archive and DEFLATE is not something to hand-roll. It is MIT, compatible with this project's licence, and `vendor/fflate/README.md` records the version, what was taken and why. It is loaded only when a spreadsheet is imported.
 
-A service worker caches the shell so it works offline once loaded.
+A service worker caches the shell so it works offline once loaded. The desktop build wraps those same files in [Electron](https://www.electronjs.org/) — about two hundred lines in `desktop/`, packaged by `electron-builder`. It registers no service worker, because every asset is already local.
 
 Push to `main`; `.github/workflows/pages.yml` runs both suites and then publishes the repository root to GitHub Pages. Pages must be set to **Source: GitHub Actions** — with any other source the deploy job fails before running a step.
 

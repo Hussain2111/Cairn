@@ -4,15 +4,69 @@
   "private": true,
   "type": "module",
   "description": "A personal roadmap and tracking tool. Static site, localStorage state, no backend.",
+  "author": "hussain2111",
+  "main": "desktop/main.js",
   "scripts": {
     "start": "node scripts/serve.mjs 4321",
     "serve": "node scripts/serve.mjs 4321",
+    "desktop": "electron .",
+    "desktop:icon": "node scripts/make-icon.mjs 1024",
+    "desktop:pack": "electron-builder --dir",
+    "desktop:dist": "electron-builder",
     "test": "node --test tests/unit/*.test.js",
     "test:watch": "node --test --watch tests/unit/*.test.js",
     "test:e2e": "playwright test",
     "test:all": "npm test && npm run test:e2e"
   },
+  "build": {
+    "appId": "io.github.hussain2111.cairn",
+    "productName": "Cairn",
+    "copyright": "Cairn",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "index.html",
+      "favicon.svg",
+      "manifest.webmanifest",
+      "desktop/**/*",
+      "src/**/*",
+      "styles/**/*",
+      "vendor/**/*",
+      "scripts/assets.mjs",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "category": "public.app-category.productivity",
+      "icon": "build/icon.png"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility",
+      "icon": "build/icon.png"
+    }
+  },
   "devDependencies": {
-    "@playwright/test": "^1.49.0"
+    "@playwright/test": "^1.49.0",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3"
   }
 }
